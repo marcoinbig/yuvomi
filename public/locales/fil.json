@@ -1417,6 +1417,7 @@
         "subcategoryLabel": "Subcategory",
         "subcategoryPlaceholder": "Pumili ng subcategory",
         "subcategoryRequired": "Mangyaring pumili ng subcategory",
+        "withoutSubcategory": "",
         "catHousing": "Pabahay / Tahanan",
         "catTransport": "Transportasyon",
         "catPersonalHealth": "Personal na Pangangalaga / Kalusugan",

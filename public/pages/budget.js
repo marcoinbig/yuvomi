@@ -234,6 +234,8 @@ let state = {
   netWorth:    0,
   accountFilterId: null,      // aktiver Konto-Filter für die Transaktionsliste (Drilldown)
   accountsShowArchived: false,
+  categoryFilterKeys: [],     // active categories filters
+  subcategoryFilter: null,    // { category, key } or null
   activeTab:   'budget',
   loanFilterId: null,
   loanStatusFilter: 'active',
@@ -731,6 +733,11 @@ export async function render(container, { user }) {
   // einer Woche noch den Kontoauszug von damals — beim Darlehens-Statusfilter
   // sogar ohne sichtbaren Hinweis. Der aktive Tab bleibt bewusst erhalten.
   resetSessionFilters(state);
+  state.accountFilterId = null;
+  state.categoryFilterKeys = [];
+  state.loanFilterId = null;
+  state.loanStatusFilter = 'active';
+  state.accountsShowArchived = false;
   // Sprungziel von aussen (Dashboard-Kachel „Ausgleich offen"): ?tab= waehlt
   // den Reiter. Ohne Parameter bleibt der zuletzt aktive, wie bisher.
   const tabFromUrl = tabFromQuery(window.location.search);
@@ -1246,7 +1253,10 @@ function renderBody() {
         ${renderCategoryBars(s.byCategory)}
       </div>
     </div>` : ''}
-    </div>`}
+      <div class="budget-subcategory-breakdown">
+        ${renderSubcategoryBreakdowns()}
+      </div>
+    </div>`} 
 
     <!-- Transaktionsliste -->
     <div class="budget-list-section">
@@ -1268,6 +1278,17 @@ function renderBody() {
             <span>${esc(responsibleFilterLabel(state))}</span>
             <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
           </button>` : ''}
+          ${state.categoryFilterKeys.map((category) => `
+            <button class="budget-account-chip" type="button"
+                    data-clear-category-filter="${esc(category)}"
+                    aria-label="${esc(t('budget.clearCategoryFilter', {
+                      name: categoryLabel(category),
+                    }))}">
+              <i data-lucide="tag" class="icon-sm" aria-hidden="true"></i>
+              <span>${esc(categoryLabel(category))}</span>
+              <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
+            </button>
+          `).join('')}
         </div>
         <!-- Suche im Hauptbuch (C6): das geteilte Feld im Kopf der Liste, die es
              filtert - mobil in seiner Icon-Form (layout.css, .section-toolbar),
@@ -1315,6 +1336,37 @@ function renderBody() {
     state.accountFilterId = null;
     await loadMonth(state.month);
     renderBody();
+  });
+
+  const budgetBody = _container.querySelector('#budget-body');
+
+  budgetBody?.addEventListener('click', (event) => {
+    const subcategoryButton = event.target.closest(
+      'button[data-subcategory-category][data-subcategory-filter]'
+    );
+
+    if (subcategoryButton && budgetBody.contains(subcategoryButton)) {
+      toggleSubcategoryFilter(
+        subcategoryButton.dataset.subcategoryCategory,
+        subcategoryButton.dataset.subcategoryFilter
+      );
+      return;
+    }
+
+    const chipCategoryButton = event.target.closest(
+      'button[data-clear-category-filter]'
+    );
+
+    if(chipCategoryButton && budgetBody.contains(chipCategoryButton)) {
+      toggleCategoryFilter(chipCategoryButton.dataset.clearCategoryFilter);
+      return;
+    }
+
+    const categoryButton = event.target.closest('button[data-category-filter]');
+    if (categoryButton && budgetBody.contains(categoryButton)) {
+      toggleCategoryFilter(categoryButton.dataset.categoryFilter);
+      return;
+    }
   });
   // Zustaendigen-Filter und Gruppierung arbeiten auf den SCHON geladenen Zeilen
   // (#1057) - kein Nachladen, der Monat liegt vollstaendig vor.
@@ -1686,17 +1738,195 @@ function renderCategoryBars(byCategory) {
              * LAENGE im CSS (der Stummel am Bahnanfang), nicht als Anteil. */
             const scale = Math.abs(r.amount) / max;
             const label = esc(categoryLabel(r.category));
+
+            const selected = state.categoryFilterKeys.includes(r.category);
             return `
-            <div class="budget-bar-row${lead && i < CHART_LEAD ? ' budget-bar-row--lead' : ''}">
+            <button 
+              type="button" 
+              class="budget-bar-row${lead && i < CHART_LEAD ? ' budget-bar-row--lead' : ''}${selected ? ' is-category-selected' : ''}"
+              data-category-filter="${esc(r.category)}"
+              aria-pressed="${selected ? 'true' : 'false'}"
+              >
               <div class="budget-bar-row__label" title="${label}">${label}</div>
               <div class="budget-bar-row__track" style="--bar-visible:${r.amount !== 0 ? 1 : 0}">
                 <div class="budget-bar-row__fill budget-bar-row__fill--${kind}" style="--bar-scale:${scale.toFixed(4)}" data-bar-key="${kind}:${esc(String(r.category))}"></div>
               </div>
               <div class="budget-bar-row__amount">${amountByRole(r.amount, 'flow').text}</div>
-            </div>`;
+            </button>`;
           }).join('')}
         </div>
       </section>`;
+  }).join('');
+}
+
+function subcategoryRows(category, entries) {
+  const groups = new Map();
+
+  for (const entry of entries) {
+    if (entry.category !== category) continue;
+
+    // Le righe mascherate non devono rivelare la sottocategoria.
+    const key = entry.details_hidden ? '' : (entry.subcategory ?? '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+
+  if (groups.size < 2) return '';
+
+  const rows = [...groups.entries()].map(([key, items]) => {
+    const amount = items.reduce(
+      (sum, entry) => sum + (entry.is_pending ? 0 : Number(entry.amount) || 0),
+      0
+    );
+    const label = key
+      ? subcategoryLabel(key)
+      : t('budget.withoutSubcategory');
+
+    return { key, items, amount, label };
+  });
+
+  rows.sort((a, b) => {
+    if (!a.key) return 1;
+    if (!b.key) return -1;
+    const known = getSubcategories(category).map((item) => item.key);
+    return known.indexOf(a.key) - known.indexOf(b.key);
+  });
+
+  const kind = expenseCategories().find(c => c.key === category) ? 'expenses' : 'income';
+
+  const categorySummary = state.summary?.byCategory?.find(
+    (item) => item.category === category
+  );
+  const categoryTotal = Math.abs(
+    categorySummary?.[kind] ?? categorySummary?.total ?? 0
+  );
+
+  return rows.map((row) => {
+    const selected = state.subcategoryFilter?.category === category
+      && state.subcategoryFilter.key === row.key;
+
+    return `
+      <button type="button"
+              class="budget-bar-row${selected ? ' is-category-selected' : ''}"
+              data-subcategory-category="${esc(category)}"
+              data-subcategory-filter="${esc(row.key)}"
+              aria-pressed="${selected ? 'true' : 'false'}">
+        <div class="budget-bar-row__label">${esc(row.label)}</div>
+        <div class="budget-bar-row__track">
+          <div class="budget-bar-row__fill budget-bar-row__fill--${kind}"
+                style="--bar-scale:${(Math.abs(row.amount) / (Math.abs(categoryTotal) || 1)).toFixed(4)}"></div>
+        </div>
+        <div class="budget-bar-row__amount">
+          ${amountByRole(row.amount, 'flow').text}
+        </div>
+      </button>`;
+  }).join('');
+}
+
+function renderSubcategoryBreakdowns() {
+  if (!state.categoryFilterKeys.length) return '';
+  
+  const entries = visibleEntries({ ignoreSubcategory: true });
+  
+
+  return state.categoryFilterKeys.map((category) => {
+    const rows = subcategoryRows(category, entries);
+    const summary = state.summary?.byCategory?.find(
+      (item) => item.category === category
+    );
+    const kind = expenseCategories().some((item) => item.key === category)
+      ? 'expenses'
+      : 'income';
+    const total = summary?.[kind] ?? 0;
+
+    return rows
+      ? `<section class="budget-subcategory-breakdown-row"
+                 aria-label="${esc(categoryLabel(category))}"
+                 labelledby="budget-subcategory-${category}">
+            <h3 class="budget-chart-block__title" id="budget-subcategory-${category}">
+              <span>${esc(categoryLabel(category))}</span>
+              <div class="budget-chart-block__total">${amountByRole(total, 'total').text}</div>
+            </h3>
+            <div class="budget-chart-block__rows">
+              ${rows}
+           </div>
+         </section>`
+      : '';
+  }).join('');
+}
+
+function toggleCategoryFilter(category) {
+  const selected = new Set(state.categoryFilterKeys);
+  if (selected.has(category)) {
+    selected.delete(category);
+    if (state.subcategoryFilter?.category === category) {
+      state.subcategoryFilter = null;
+    }
+  } else {
+    selected.add(category);
+  }
+
+  state.categoryFilterKeys = [...selected];
+  renderBody();
+}
+
+function toggleSubcategoryFilter(category, key) {
+  const current = state.subcategoryFilter;
+  state.subcategoryFilter =
+    current?.category === category && current.key === key
+      ? null
+      : { category, key };
+
+  renderBody();
+}
+
+function renderEntriesByCategory(entries) {
+  return state.categoryFilterKeys.map((category) => {
+    const categoryEntries = entries.filter((entry) => entry.category === category);
+    if (!categoryEntries.length) return '';
+
+    const categoryHeading = `
+      <h3 class="budget-category-group__title">
+        ${esc(categoryLabel(category))}
+      </h3>`;
+
+    // Il bucket privato non deve esporre informazioni sulle sottocategorie.
+    if (category === MASKED_CATEGORY) {
+      return `<section class="budget-category-group">
+        ${categoryHeading}
+        ${entryRows(categoryEntries)}
+      </section>`;
+    }
+
+    const bySubcategory = new Map();
+    for (const entry of categoryEntries) {
+      const key = entry.details_hidden ? '' : (entry.subcategory ?? '');
+      if (!bySubcategory.has(key)) bySubcategory.set(key, []);
+      bySubcategory.get(key).push(entry);
+    }
+
+    const knownKeys = getSubcategories(category).map((item) => item.key);
+    const subcategoryKeys = [
+      ...knownKeys.filter((key) => bySubcategory.has(key)),
+      ...[...bySubcategory.keys()]
+        .filter((key) => key && !knownKeys.includes(key))
+        .sort((a, b) => subcategoryLabel(a).localeCompare(subcategoryLabel(b))),
+      ...(bySubcategory.has('') ? [''] : []),
+    ];
+
+    const subcategoryGroups = subcategoryKeys.map((key) => `
+      <section class="budget-subcategory-group">
+        <h4 class="budget-subcategory-group__title">
+          ${esc(key ? subcategoryLabel(key) : t('budget.withoutSubcategory'))}
+        </h4>
+        ${entryRows(bySubcategory.get(key), { categoryGrouped: true })}
+      </section>
+    `).join('');
+
+    return `<section class="budget-category-group">
+      ${categoryHeading}
+      ${subcategoryGroups}
+    </section>`;
   }).join('');
 }
 
@@ -1734,10 +1964,25 @@ function groupEntriesByResponsible(entries, members = state.members) {
   return ordered;
 }
 
-function visibleEntries() {
-  if (state.responsibleFilterId == null) return state.entries;
-  return state.entries.filter((e) =>
-    (e.responsible_users ?? []).some((u) => u.id === state.responsibleFilterId));
+function visibleEntries({ ignoreSubcategory = false } = {}) {
+  return state.entries.filter((entry) => {
+    const matchesResponsible = state.responsibleFilterId == null
+      || (entry.responsible_users ?? []).some(
+        (user) => user.id === state.responsibleFilterId
+      );
+
+    const matchesCategory = state.categoryFilterKeys.length === 0
+      || state.categoryFilterKeys.includes(entry.category);
+
+    const filter = state.subcategoryFilter;
+    const matchesSubcategory = ignoreSubcategory
+      || !filter
+      || (entry.category === filter.category
+        && !entry.details_hidden
+        && (entry.subcategory ?? '') === filter.key);
+
+    return matchesResponsible && matchesCategory && matchesSubcategory;
+  });
 }
 
 function renderEntries() {
@@ -1781,6 +2026,10 @@ function renderEntries() {
     });
   }
 
+  if (state.categoryFilterKeys.length > 1) {
+    return renderEntriesByCategory(rows);
+  }
+
   if (state.groupByResponsible) {
     return groupEntriesByResponsible(rows).map((group) => `
       <div class="budget-responsible-group">
@@ -1816,7 +2065,7 @@ function statementCreditLimitHtml() {
 }
 
 /** Die Buchungszeilen selbst - einmal gebaut, von Liste und Gruppen benutzt. */
-function entryRows(list, { fullDate = false } = {}) {
+function entryRows(list, { fullDate = false, categoryGrouped = false } = {}) {
   const ro = readOnly();
   // In einem Prognose-Monat liegt JEDE Zeile nach heute - dort sagt es der
   // Titel der Bilanz, und ein Symbol in jeder Metazeile waere Wiederholung.
@@ -1856,7 +2105,9 @@ function entryRows(list, { fullDate = false } = {}) {
      * Achse, nach der das Balkendiagramm über der Liste den Monat aufteilt;
      * die Unterkategorie verfeinert sie und wird beim Öffnen der Buchung
      * gezeigt und geändert. */
-    const categoryMeta = categoryLabel(e.category);
+    const categoryMeta = categoryGrouped
+    ? (e.details_hidden || !e.subcategory ? '' : subcategoryLabel(e.subcategory))
+    : categoryLabel(e.category);
     const acctName = accountName(e.account_id);
     /* Das Trennzeichen gehört IN den Span, nicht davor: das Konto fällt unter
      * 480px Containerbreite weg (budget.css), und ein Separator davor bliebe
@@ -5169,6 +5420,8 @@ export const __test = {
     _container = container;
     toggleCategoryChart();
   },
+
+  renderSubcategoryBreakdowns,
   toggleBalanceDetailsForTest(container) {
     _container = container;
     toggleBalanceDetails();

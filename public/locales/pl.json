@@ -1565,6 +1565,7 @@
         "subcategoryLabel": "Podkategoria",
         "subcategoryPlaceholder": "Wybierz podkategorię",
         "subcategoryRequired": "Wybierz podkategorię, proszę",
+        "withoutSubcategory": "",
         "catHousing": "Mieszkanie / Dom",
         "catTransport": "Transport",
         "catPersonalHealth": "Higiena osobista / Zdrowie",

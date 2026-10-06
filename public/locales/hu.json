@@ -1402,6 +1402,7 @@
         "subcategoryLabel": "Alkategória",
         "subcategoryPlaceholder": "Válassz alkategóriát",
         "subcategoryRequired": "Kérjük, válassz egy alkategóriát",
+        "withoutSubcategory": "",
         "catHousing": "Lakhatás / Otthon",
         "catTransport": "Közlekedés / Mobilitás",
         "catPersonalHealth": "Személyes gondoskodás / Egészség",

@@ -1402,6 +1402,7 @@
         "subcategoryLabel": "子分类",
         "subcategoryPlaceholder": "选择子分类",
         "subcategoryRequired": "请选择子分类",
+        "withoutSubcategory": "",
         "catHousing": "住房 / 家庭",
         "catTransport": "出行",
         "catPersonalHealth": "个人护理 / 健康",
