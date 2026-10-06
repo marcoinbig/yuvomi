@@ -128,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Categories and subcategories can filter transactions list** (#1593, from D#1583) 
+  Tapping a category or subcategory in the budget overview now filters the transactions list.
 - **Overlapping events in the day and week view are placed by person, not by start time**
   (D#1605, #1633). Events at the same time used to be packed by the clock alone: whoever
   started first stood on the left, so the same person could be left at nine and right at
