@@ -1624,6 +1624,7 @@
         "subcategoryLabel": "الفئة الفرعية",
         "subcategoryPlaceholder": "اختر فئة فرعية",
         "subcategoryRequired": "يرجى اختيار فئة فرعية",
+        "withoutSubcategory": "",
         "catHousing": "السكن / المنزل",
         "catTransport": "النقل",
         "catPersonalHealth": "العناية الشخصية / الصحة",
