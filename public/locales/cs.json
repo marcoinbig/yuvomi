@@ -1470,6 +1470,7 @@
         "subcategoryLabel": "Podkategorie",
         "subcategoryPlaceholder": "Vyberte podkategorii",
         "subcategoryRequired": "Vyberte prosím podkategorii",
+        "withoutSubcategory": "",
         "catHousing": "Bydlení / Domov",
         "catTransport": "Doprava",
         "catPersonalHealth": "Osobní péče / Zdraví",

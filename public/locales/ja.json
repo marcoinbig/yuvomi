@@ -1397,6 +1397,7 @@
         "subcategoryLabel": "サブカテゴリー",
         "subcategoryPlaceholder": "サブカテゴリーを選択",
         "subcategoryRequired": "サブカテゴリーを選択してください",
+        "withoutSubcategory": "",
         "catHousing": "住居 / 家",
         "catTransport": "交通費",
         "catPersonalHealth": "パーソナルケア / 健康",

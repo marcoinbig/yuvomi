@@ -1397,6 +1397,7 @@
         "subcategoryLabel": "उपश्रेणी",
         "subcategoryPlaceholder": "उपश्रेणी चुनें",
         "subcategoryRequired": "कृपया एक उपश्रेणी चुनें",
+        "withoutSubcategory": "",
         "catHousing": "आवास / घर",
         "catTransport": "परिवहन",
         "catPersonalHealth": "व्यक्तिगत देखभाल / स्वास्थ्य",

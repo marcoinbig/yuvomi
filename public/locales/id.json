@@ -1412,6 +1412,7 @@
         "subcategoryLabel": "Subkategori",
         "subcategoryPlaceholder": "Pilih subkategori",
         "subcategoryRequired": "Silakan pilih subkategori",
+        "withoutSubcategory": "",
         "catHousing": "Tempat tinggal / Rumah",
         "catTransport": "Transportasi",
         "catPersonalHealth": "Perawatan diri / Kesehatan",
