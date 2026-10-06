@@ -2607,6 +2607,7 @@ function uebersicht(extra = {}) {
   let html = '';
   const body = {
     replaceChildren() { html = ''; },
+    addEventListener: (e) => {},
     insertAdjacentHTML(_pos, markup) { html += markup; },
     setAttribute() {}, querySelector: () => null,
   };

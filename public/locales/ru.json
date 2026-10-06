@@ -1553,7 +1553,11 @@
         "subcategoryLabel": "Подкатегория",
         "subcategoryPlaceholder": "Выберите подкатегорию",
         "subcategoryRequired": "Пожалуйста, выберите подкатегорию",
+<<<<<<< HEAD
         "withoutSubcategory": "Без подкатегории",
+=======
+        "withoutSubcategory": "",
+>>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "Жильё / Дом",
         "catTransport": "Транспорт",
         "catPersonalHealth": "Уход за собой / Здоровье",

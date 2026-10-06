@@ -748,6 +748,11 @@ export async function render(container, { user }) {
   // einer Woche noch den Kontoauszug von damals — beim Darlehens-Statusfilter
   // sogar ohne sichtbaren Hinweis. Der aktive Tab bleibt bewusst erhalten.
   resetSessionFilters(state);
+  state.accountFilterId = null;
+  state.categoryFilterKeys = [];
+  state.loanFilterId = null;
+  state.loanStatusFilter = 'active';
+  state.accountsShowArchived = false;
   // Sprungziel von aussen (Dashboard-Kachel „Ausgleich offen"): ?tab= waehlt
   // den Reiter. Ohne Parameter bleibt der zuletzt aktive, wie bisher.
   const tabFromUrl = tabFromQuery(window.location.search);
@@ -2061,6 +2066,10 @@ function renderEntries() {
         attrs: { 'data-clear-budget-filters': '' },
       },
     })
+  }
+
+  if (state.categoryFilterKeys.length > 1) {
+    return renderEntriesByCategory(rows);
   }
 
   if (state.groupByResponsible) {

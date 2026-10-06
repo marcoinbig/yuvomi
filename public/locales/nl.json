@@ -1405,7 +1405,11 @@
         "subcategoryLabel": "Subcategorie",
         "subcategoryPlaceholder": "Kies een subcategorie",
         "subcategoryRequired": "Kies alsjeblieft een subcategorie",
+<<<<<<< HEAD
         "withoutSubcategory": "Zonder subcategorie",
+=======
+        "withoutSubcategory": "",
+>>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "Wonen / Thuis",
         "catTransport": "Vervoer",
         "catPersonalHealth": "Persoonlijke verzorging / Gezondheid",

@@ -1405,7 +1405,11 @@
         "subcategoryLabel": "Underkategori",
         "subcategoryPlaceholder": "Velg en underkategori",
         "subcategoryRequired": "Vennligst velg en underkategori",
+<<<<<<< HEAD
         "withoutSubcategory": "Uten underkategori",
+=======
+        "withoutSubcategory": "",
+>>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "Bolig / Hjem",
         "catTransport": "Transport",
         "catPersonalHealth": "Personlig pleie / Helse",

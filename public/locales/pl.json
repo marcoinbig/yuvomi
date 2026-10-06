@@ -1568,7 +1568,11 @@
         "subcategoryLabel": "Podkategoria",
         "subcategoryPlaceholder": "Wybierz podkategorię",
         "subcategoryRequired": "Wybierz podkategorię, proszę",
+<<<<<<< HEAD
         "withoutSubcategory": "Bez podkategorii",
+=======
+        "withoutSubcategory": "",
+>>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "Mieszkanie / Dom",
         "catTransport": "Transport",
         "catPersonalHealth": "Higiena osobista / Zdrowie",
