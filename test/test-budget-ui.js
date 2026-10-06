@@ -2356,6 +2356,7 @@ function uebersicht(extra = {}) {
   let html = '';
   const body = {
     replaceChildren() { html = ''; },
+    addEventListener: (e) => {},
     insertAdjacentHTML(_pos, markup) { html += markup; },
     setAttribute() {}, querySelector: () => null,
   };
@@ -3615,5 +3616,106 @@ test('#1656: die Textfelder des Darlehens lassen nicht mehr zu, als der Server a
   for (const [id, max] of [['lm-borrower', 100], ['lm-title', 200], ['lm-notes', 1000]]) {
     const tag = html.match(new RegExp(`<(?:input|textarea)[^>]*id="${id}"[^>]*>`))?.[0] ?? '';
     assert.match(tag, new RegExp(`maxlength="${max}"`), `${id}: ${tag}`);
+  }
+});
+
+test('#1593 subcategories: mostra il totale e scala le barre sul totale della categoria', () => {
+  const state = budgetUi.state;
+  const previous = { ...state };
+
+  const scales = (html, kind) =>
+    [...html.matchAll(new RegExp(
+      `class="budget-bar-row__fill budget-bar-row__fill--${kind}"\\s+style="--bar-scale:([\\d.]+)"`,
+      'g',
+    ))].map((match) => Number(match[1]));
+
+  try {
+    Object.assign(state, {
+      currency: 'EUR',
+      categoryFilterKeys: ['housing'],
+      subcategoryFilter: null,
+      responsibleFilterId: null,
+      meta: {
+        expenseCategories: [{ key: 'housing', name: 'Abitazione' }],
+        incomeCategories: [],
+        subcategories: { housing: [{ key: 'rent' }, { key: 'utilities' }] },
+      },
+      entries: [
+        { category: 'housing', subcategory: 'rent_mortgage', amount: -700 },
+        { category: 'housing', subcategory: 'utilities', amount: -200 },
+      ],
+      summary: {
+        byCategory: [{ category: 'housing', income: 0, expenses: -900, total: -900 }],
+      },
+    });
+
+    const expensesHtml = budgetUi.renderSubcategoryBreakdowns();
+    assert.match(expensesHtml, /budget-chart-block__total">[^<]*900,00/);
+    assert.deepEqual(scales(expensesHtml, 'expenses'), [0.7778, 0.2222]);
+
+    Object.assign(state, {
+      categoryFilterKeys: ['salary'],
+      meta: {
+        expenseCategories: [],
+        incomeCategories: [{ key: 'salary', name: 'Stipendio' }],
+        subcategories: { salary: [{ key: 'main' }, { key: 'bonus' }] },
+      },
+      entries: [
+        { category: 'salary', subcategory: 'main', amount: 900 },
+        { category: 'salary', subcategory: 'bonus', amount: 300 },
+      ],
+      summary: {
+        byCategory: [{ category: 'salary', income: 1200, expenses: 0, total: 1200 }],
+      },
+    });
+
+    const incomeHtml = budgetUi.renderSubcategoryBreakdowns();
+    
+    assert.match(incomeHtml, /budget-chart-block__total">[^<]*1\.200,00/);
+    const _scales = scales(incomeHtml, 'income');
+    assert.deepEqual(_scales, [0.75, 0.25]);
+
+    assert.match(incomeHtml, /budget-bar-row__fill budget-bar-row__fill--income/);
+    assert.doesNotMatch(incomeHtml, /budget-bar-row__fill budget-bar-row__fill--expenses/);
+  } finally {
+    Object.assign(state, previous);
+  }
+});
+
+test('#1593 subcategories: le barre delle spese scalano sul totale delle spese', () => {
+  const state = budgetUi.state;
+  const previous = { ...state };
+
+  try {
+    Object.assign(state, {
+      currency: 'EUR',
+      categoryFilterKeys: ['housing'],
+      subcategoryFilter: null,
+      responsibleFilterId: null,
+      meta: {
+        expenseCategories: [{ key: 'housing', name: 'Abitazione' }],
+        incomeCategories: [],
+        subcategories: { housing: [{ key: 'rent' }, { key: 'utilities' }] },
+      },
+      entries: [
+        { category: 'housing', subcategory: 'rent_mortgage', amount: -700 },
+        { category: 'housing', subcategory: 'utilities', amount: -200 },
+      ],
+      summary: {
+        byCategory: [{ category: 'housing', income: 0, expenses: -900, total: -900 }],
+      },
+    });
+
+    const html = budgetUi.renderSubcategoryBreakdowns();
+
+    assert.match(html, /budget-bar-row__fill budget-bar-row__fill--expenses/);
+    assert.doesNotMatch(html, /budget-bar-row__fill budget-bar-row__fill--income/);
+    assert.match(html, /budget-chart-block__total">[^<]*900,00/);
+    assert.deepEqual(
+      [...html.matchAll(/--bar-scale:([\d.]+)/g)].map((m) => Number(m[1])),
+      [0.7778, 0.2222]
+    );
+  } finally {
+    Object.assign(state, previous);
   }
 });

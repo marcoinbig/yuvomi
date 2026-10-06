@@ -1391,6 +1391,7 @@
         "subcategoryLabel": "Danh mục phụ",
         "subcategoryPlaceholder": "Chọn danh mục phụ",
         "subcategoryRequired": "Vui lòng chọn danh mục phụ",
+        "withoutSubcategory": "",
         "catHousing": "Nhà ở / Gia đình",
         "catTransport": "Giao thông",
         "catPersonalHealth": "Chăm sóc cá nhân / Sức khỏe",

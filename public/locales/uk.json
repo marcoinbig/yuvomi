@@ -1537,6 +1537,7 @@
         "subcategoryLabel": "Підкатегорія",
         "subcategoryPlaceholder": "Виберіть підкатегорію",
         "subcategoryRequired": "Будь ласка, виберіть підкатегорію",
+        "withoutSubcategory": "",
         "catHousing": "Житло / Дім",
         "catTransport": "Транспорт",
         "catPersonalHealth": "Особистий догляд / Здоров'я",

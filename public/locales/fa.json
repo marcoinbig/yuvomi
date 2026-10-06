@@ -1406,6 +1406,7 @@
         "subcategoryLabel": "زیردسته",
         "subcategoryPlaceholder": "یک زیردسته انتخاب کنید",
         "subcategoryRequired": "لطفاً یک زیردسته انتخاب کنید",
+        "withoutSubcategory": "",
         "catHousing": "مسکن / خانه",
         "catTransport": "حمل‌ونقل",
         "catPersonalHealth": "بهداشت فردی / سلامت",

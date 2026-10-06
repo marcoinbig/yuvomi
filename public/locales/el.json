@@ -1391,6 +1391,7 @@
         "subcategoryLabel": "Υποκατηγορία",
         "subcategoryPlaceholder": "Επιλέξτε υποκατηγορία",
         "subcategoryRequired": "Επιλέξτε μια υποκατηγορία",
+        "withoutSubcategory": "",
         "catHousing": "Κατοικία / Σπίτι",
         "catTransport": "Μεταφορές",
         "catPersonalHealth": "Προσωπική φροντίδα / Υγεία",

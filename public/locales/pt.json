@@ -1391,6 +1391,7 @@
         "subcategoryLabel": "Subcategoria",
         "subcategoryPlaceholder": "Escolha uma subcategoria",
         "subcategoryRequired": "Escolha uma subcategoria, por favor",
+        "withoutSubcategory": "",
         "catHousing": "Habitação / Casa",
         "catTransport": "Transporte",
         "catPersonalHealth": "Cuidados Pessoais / Saúde",
