@@ -1191,22 +1191,22 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  min-block-size: var(--target-base);
   background: transparent;
   column-gap: var(--space-2);
   row-gap: var(--space-1h);
-  padding: var(--space-2) var(--space-4);
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-  &.is-category-selected {
-    background: color-mix(in srgb, var(--module-accent, var(--color-accent)) var(--tint-state), var(--color-surface));
-    border-color: color-mix(in srgb, var(--module-accent, var(--color-accent)) var(--tint-hint), transparent);
-    color: var(--color-text-primary);
-  }
+  padding: var(--space-2);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-
+.budget-bar-row.is-category-selected {
+  background: color-mix(in srgb, var(--module-accent, var(--color-accent)) var(--tint-state), var(--color-surface));
+  color: var(--color-text-primary);
+}
 
 .budget-subcategory-breakdown {
   width: 100%;
+  margin-bottom: var(--space-2);
 }
 
 .budget-subcategory-breakdown-row {
@@ -1214,32 +1214,9 @@
   margin-top: var(--space-3);
 }
 
-.budget-subcategory-group {
-  padding-left: var(--space-2);
-  padding-right: var(--space-2);
-}
-
-.budget-category-group__title {
-  padding-top: var(--space-1);
-  padding-bottom: var(--space-1);
-  padding-left: var(--space-2);
-  font-weight: bold;
-}
-
-.budget-subcategory-group__title {
-  border-top: 1px solid var(--color-border-subtle);
-  border-bottom: 1px solid var(--color-border-subtle);
-  padding: var(--space-2);
-}
-
 .budget-bar-row__label  { grid-area: 1 / 1; }
 .budget-bar-row__amount { grid-area: 1 / 2; }
 .budget-bar-row__track  { grid-area: 2 / 1 / 3 / 3; }
-
-/* .budget-bar-row + .budget-bar-row {
-  padding: var(--space-1);
-  border-top: 1px solid var(--color-border-subtle);
-} */
 
 /* UMBRECHEN, NICHT ABSCHNEIDEN - dieselbe Regel, die list-row.css:311 fuer
  * `.list-row__name` aufschreibt, und aus demselben Grund. Sie stand dort als
@@ -1282,6 +1259,7 @@
 }
 
 .budget-bar-row__fill {
+  display: block;
   width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
