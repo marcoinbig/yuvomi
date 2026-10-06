@@ -2068,10 +2068,6 @@ function renderEntries() {
     })
   }
 
-  if (state.categoryFilterKeys.length > 1) {
-    return renderEntriesByCategory(rows);
-  }
-
   if (state.groupByResponsible) {
     return groupEntriesByResponsible(rows).map((group) => `
       <div class="budget-responsible-group">
