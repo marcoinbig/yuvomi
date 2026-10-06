@@ -1420,11 +1420,7 @@
         "subcategoryLabel": "Subkategori",
         "subcategoryPlaceholder": "Pilih subkategori",
         "subcategoryRequired": "Silakan pilih subkategori",
-<<<<<<< HEAD
         "withoutSubcategory": "Tanpa subkategori",
-=======
-        "withoutSubcategory": "",
->>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "Tempat tinggal / Rumah",
         "catTransport": "Transportasi",
         "catPersonalHealth": "Perawatan diri / Kesehatan",

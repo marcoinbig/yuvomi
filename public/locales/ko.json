@@ -1420,11 +1420,7 @@
         "subcategoryLabel": "하위 카테고리",
         "subcategoryPlaceholder": "하위 카테고리 선택",
         "subcategoryRequired": "하위 카테고리를 선택하세요",
-<<<<<<< HEAD
         "withoutSubcategory": "하위 카테고리 없음",
-=======
-        "withoutSubcategory": "",
->>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "주거 / 집",
         "catTransport": "교통",
         "catPersonalHealth": "위생 / 건강",

@@ -1405,11 +1405,7 @@
         "subcategoryLabel": "サブカテゴリー",
         "subcategoryPlaceholder": "サブカテゴリーを選択",
         "subcategoryRequired": "サブカテゴリーを選択してください",
-<<<<<<< HEAD
         "withoutSubcategory": "サブカテゴリなし",
-=======
-        "withoutSubcategory": "",
->>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "住居 / 家",
         "catTransport": "交通費",
         "catPersonalHealth": "パーソナルケア / 健康",

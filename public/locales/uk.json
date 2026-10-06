@@ -1553,11 +1553,7 @@
         "subcategoryLabel": "Підкатегорія",
         "subcategoryPlaceholder": "Виберіть підкатегорію",
         "subcategoryRequired": "Будь ласка, виберіть підкатегорію",
-<<<<<<< HEAD
         "withoutSubcategory": "Без підкатегорії",
-=======
-        "withoutSubcategory": "",
->>>>>>> 653b708a155afb06dedab6835b7fdaa22520344f
         "catHousing": "Житло / Дім",
         "catTransport": "Транспорт",
         "catPersonalHealth": "Особистий догляд / Здоров'я",
