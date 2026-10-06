@@ -234,7 +234,7 @@ let state = {
   netWorth:    0,
   accountFilterId: null,      // aktiver Konto-Filter für die Transaktionsliste (Drilldown)
   accountsShowArchived: false,
-  categoryFilterKeys: [],     // active categories filters
+  categoryFilter: null,       // active category filter
   subcategoryFilter: null,    // { category, key } or null
   activeTab:   'budget',
   loanFilterId: null,
@@ -593,12 +593,25 @@ function paintLedger() {
 }
 
 function ledgerStatusText() {
-  if (!state.ledgerQuery || !state.ledgerResults || state.ledgerError) return '';
-  const count = state.ledgerResults.length;
-  if (!count) return '';
-  return state.ledgerTruncated
-    ? t('budget.ledgerSearchTruncated', { limit: count })
-    : t('budget.ledgerSearchCount', { count });
+  if (state.ledgerQuery && state.ledgerResults && !state.ledgerError) {
+    const count = state.ledgerResults.length;
+    if (!count) return '';
+    return state.ledgerTruncated
+      ? t('budget.ledgerSearchTruncated', { limit: count })
+      : t('budget.ledgerSearchCount', { count });
+  }
+
+  const hasFilter = state.accountFilterId != null
+    || state.categoryFilter != null
+    || state.subcategoryFilter != null
+    || state.responsibleFilterId != null;
+  if (!hasFilter) return '';
+
+  const entries = visibleEntries();
+  const sum = entries.reduce((total, entry) => (
+    total + (entry.is_pending ? 0 : Number(entry.amount) || 0)
+  ), 0);
+  return `${t('budget.ledgerSearchCount', { count: entries.length })} · ${t('budget.amountLabel')}: ${formatAmount(sum)}`;
 }
 
 function findEntry(id) {
@@ -717,6 +730,8 @@ function syncCurrentButton(root = _container) {
  */
 function resetSessionFilters(target) {
   target.accountFilterId = null;
+  target.categoryFilter = null;
+  target.subcategoryFilter = null;
   target.responsibleFilterId = null;
   target.responsibleFilterCachedName = '';
   target.loanFilterId = null;
@@ -733,11 +748,6 @@ export async function render(container, { user }) {
   // einer Woche noch den Kontoauszug von damals — beim Darlehens-Statusfilter
   // sogar ohne sichtbaren Hinweis. Der aktive Tab bleibt bewusst erhalten.
   resetSessionFilters(state);
-  state.accountFilterId = null;
-  state.categoryFilterKeys = [];
-  state.loanFilterId = null;
-  state.loanStatusFilter = 'active';
-  state.accountsShowArchived = false;
   // Sprungziel von aussen (Dashboard-Kachel „Ausgleich offen"): ?tab= waehlt
   // den Reiter. Ohne Parameter bleibt der zuletzt aktive, wie bisher.
   const tabFromUrl = tabFromQuery(window.location.search);
@@ -821,6 +831,54 @@ export async function render(container, { user }) {
   // `#budget-body` bleibt ueber jeden renderBody() hinweg dasselbe Element -
   // nur seine Kinder werden ersetzt -, also genuegt EIN Riegel pro Seitenaufbau.
   container.querySelector('#budget-body')?.addEventListener('click', readOnlyLatch, true);
+
+  const budgetBody = _container.querySelector('#budget-body');
+
+  budgetBody?.addEventListener('click', (event) => {
+    const subcategoryButton = event.target.closest(
+      'button[data-subcategory-category][data-subcategory-filter]'
+    );
+
+    if (subcategoryButton && budgetBody.contains(subcategoryButton)) {
+      toggleSubcategoryFilter(
+        subcategoryButton.dataset.subcategoryCategory,
+        subcategoryButton.dataset.subcategoryFilter
+      );
+      return;
+    }
+
+    const chipCategoryButton = event.target.closest(
+      'button[data-clear-category-filter]'
+    );
+
+    if(chipCategoryButton && budgetBody.contains(chipCategoryButton)) {
+      toggleCategoryFilter(chipCategoryButton.dataset.clearCategoryFilter);
+      return;
+    }
+    const chipSubcategoryButton = event.target.closest(
+      'button[data-clear-subcategory-category][data-clear-subcategory-key]'
+    );
+
+    if(chipSubcategoryButton && budgetBody.contains(chipSubcategoryButton)) {
+      toggleSubcategoryFilter(
+        chipSubcategoryButton.dataset.clearSubcategoryCategory,
+        chipSubcategoryButton.dataset.clearSubcategoryKey
+      );
+      return;
+    }
+
+    const categoryButton = event.target.closest('button[data-category-filter]');
+    if (categoryButton && budgetBody.contains(categoryButton)) {
+      toggleCategoryFilter(categoryButton.dataset.categoryFilter);
+      return;
+    }
+
+    const clearBudgetFilterButton = event.target.closest('button[data-clear-budget-filters]');
+    if(clearBudgetFilterButton && budgetBody.contains(clearBudgetFilterButton)) {
+      void clearBudgetFilters();
+    }
+  });
+
   // Werkzeug-Menue der Buchungsliste (listToolsMenuHtml): Position, Schliessen
   // und Pfeiltasten haengen an der stabilen Wurzel, nicht am ersetzten Panel.
   installPopoverMenus(container);
@@ -1198,7 +1256,6 @@ function renderBody() {
    * Teil einer Seite ohne Inhalt. Ohne Buchung und ohne erwartete Buchung
    * entfaellt die Seitenleiste ganz; der Leerzustand spricht allein. */
   const monthEmpty = !state.entries.length && !s.income && !s.expenses && !s.pending?.count;
-
   setHtml(body, `
     <div class="budget-tab-panel page-scrollport budget-tab-panel--budget">
     <!-- EIN Scrollport (das Panel). Ab ~960px Container zwei Spalten: links die
@@ -1253,16 +1310,13 @@ function renderBody() {
         ${renderCategoryBars(s.byCategory)}
       </div>
     </div>` : ''}
-      <div class="budget-subcategory-breakdown">
-        ${renderSubcategoryBreakdowns()}
-      </div>
     </div>`} 
 
     <!-- Transaktionsliste -->
     <div class="budget-list-section">
       <div class="budget-list-header section-toolbar">
         <div class="budget-list-header__lead">
-          <h2 class="budget-list-header__title u-section-title" >${t('budget.transactions')}</h2>
+          <h2 class="budget-list-header__title u-section-title" tabindex="-1">${t('budget.transactions')}</h2>
           ${state.accountFilterId ? `
           <button class="budget-account-chip" id="budget-clear-account-filter" type="button"
                   aria-label="${t('budget.clearAccountFilter')}">
@@ -1278,17 +1332,7 @@ function renderBody() {
             <span>${esc(responsibleFilterLabel(state))}</span>
             <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
           </button>` : ''}
-          ${state.categoryFilterKeys.map((category) => `
-            <button class="budget-account-chip" type="button"
-                    data-clear-category-filter="${esc(category)}"
-                    aria-label="${esc(t('budget.clearCategoryFilter', {
-                      name: categoryLabel(category),
-                    }))}">
-              <i data-lucide="tag" class="icon-sm" aria-hidden="true"></i>
-              <span>${esc(categoryLabel(category))}</span>
-              <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
-            </button>
-          `).join('')}
+          ${budgetChipHtml()}
         </div>
         <!-- Suche im Hauptbuch (C6): das geteilte Feld im Kopf der Liste, die es
              filtert - mobil in seiner Icon-Form (layout.css, .section-toolbar),
@@ -1303,6 +1347,9 @@ function renderBody() {
     className: 'budget-list-header__search',
   })}
         <div class="budget-list-header__actions">${listToolsMenuHtml()}</div>
+      </div>
+      <div class="budget-subcategory-breakdown">
+        ${renderSubcategoryBreakdowns()}
       </div>
       <p class="budget-list-search__status" id="budget-ledger-status" role="status">${esc(ledgerStatusText())}</p>
       <div class="budget-list" id="budget-list">
@@ -1338,36 +1385,7 @@ function renderBody() {
     renderBody();
   });
 
-  const budgetBody = _container.querySelector('#budget-body');
-
-  budgetBody?.addEventListener('click', (event) => {
-    const subcategoryButton = event.target.closest(
-      'button[data-subcategory-category][data-subcategory-filter]'
-    );
-
-    if (subcategoryButton && budgetBody.contains(subcategoryButton)) {
-      toggleSubcategoryFilter(
-        subcategoryButton.dataset.subcategoryCategory,
-        subcategoryButton.dataset.subcategoryFilter
-      );
-      return;
-    }
-
-    const chipCategoryButton = event.target.closest(
-      'button[data-clear-category-filter]'
-    );
-
-    if(chipCategoryButton && budgetBody.contains(chipCategoryButton)) {
-      toggleCategoryFilter(chipCategoryButton.dataset.clearCategoryFilter);
-      return;
-    }
-
-    const categoryButton = event.target.closest('button[data-category-filter]');
-    if (categoryButton && budgetBody.contains(categoryButton)) {
-      toggleCategoryFilter(categoryButton.dataset.categoryFilter);
-      return;
-    }
-  });
+ 
   // Zustaendigen-Filter und Gruppierung arbeiten auf den SCHON geladenen Zeilen
   // (#1057) - kein Nachladen, der Monat liegt vollstaendig vor.
   _container.querySelector('#budget-clear-responsible-filter')?.addEventListener('click', () => {
@@ -1419,6 +1437,35 @@ function renderBody() {
 
   // Kein keydown-Handler mehr: Enter/Space auf dem Titel-Button feuert dessen
   // nativen click, der ueber die Delegation oben im Edit-Modal landet.
+}
+
+function budgetChipHtml() {
+  let chip = '';
+  if(state.categoryFilter != null) {
+    if(state.subcategoryFilter != null) {
+      chip = `<button class="budget-account-chip" type="button"
+                    data-clear-subcategory-category="${esc(state.categoryFilter)}"
+                    data-clear-subcategory-key = "${esc(state.subcategoryFilter.key)}"
+                    aria-label="${esc(t('budget.clearCategoryFilter', {
+                      name: categoryLabel(state.categoryFilter) + ' > ' + subcategoryLabel(state.subcategoryFilter.key),
+                    }))}">
+              <i data-lucide="tag" class="icon-sm" aria-hidden="true"></i>
+              <span>${esc(categoryLabel(state.categoryFilter) + ' > ' + subcategoryLabel(state.subcategoryFilter.key))}</span>
+              <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
+            </button>`;
+    } else {
+      chip = `<button class="budget-account-chip" type="button"
+                    data-clear-category-filter="${esc(state.categoryFilter)}"
+                    aria-label="${esc(t('budget.clearCategoryFilter', {
+                      name: categoryLabel(state.categoryFilter),
+                    }))}">
+              <i data-lucide="tag" class="icon-sm" aria-hidden="true"></i>
+              <span>${esc(categoryLabel(state.categoryFilter))}</span>
+              <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
+            </button>`;
+    }
+  }
+  return chip;
 }
 
 function updateTabs() {
@@ -1739,7 +1786,7 @@ function renderCategoryBars(byCategory) {
             const scale = Math.abs(r.amount) / max;
             const label = esc(categoryLabel(r.category));
 
-            const selected = state.categoryFilterKeys.includes(r.category);
+            const selected = state.categoryFilter === r.category;
             return `
             <button 
               type="button" 
@@ -1747,11 +1794,11 @@ function renderCategoryBars(byCategory) {
               data-category-filter="${esc(r.category)}"
               aria-pressed="${selected ? 'true' : 'false'}"
               >
-              <div class="budget-bar-row__label" title="${label}">${label}</div>
-              <div class="budget-bar-row__track" style="--bar-visible:${r.amount !== 0 ? 1 : 0}">
-                <div class="budget-bar-row__fill budget-bar-row__fill--${kind}" style="--bar-scale:${scale.toFixed(4)}" data-bar-key="${kind}:${esc(String(r.category))}"></div>
-              </div>
-              <div class="budget-bar-row__amount">${amountByRole(r.amount, 'flow').text}</div>
+              <span class="budget-bar-row__label" title="${label}">${label}</span>
+              <span class="budget-bar-row__track" style="--bar-visible:${r.amount !== 0 ? 1 : 0}">
+                <span class="budget-bar-row__fill budget-bar-row__fill--${kind}" style="--bar-scale:${scale.toFixed(4)}" data-bar-key="${kind}:${esc(String(r.category))}"></span>
+              </span>
+              <span class="budget-bar-row__amount">${amountByRole(r.amount, 'flow').text}</span>
             </button>`;
           }).join('')}
         </div>
@@ -1765,7 +1812,7 @@ function subcategoryRows(category, entries) {
   for (const entry of entries) {
     if (entry.category !== category) continue;
 
-    // Le righe mascherate non devono rivelare la sottocategoria.
+    // Masked rows must not reveal their subcategory.
     const key = entry.details_hidden ? '' : (entry.subcategory ?? '');
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(entry);
@@ -1794,140 +1841,112 @@ function subcategoryRows(category, entries) {
 
   const kind = expenseCategories().find(c => c.key === category) ? 'expenses' : 'income';
 
-  const categorySummary = state.summary?.byCategory?.find(
-    (item) => item.category === category
+  const categoryTotal = rows.reduce(
+    (total, row) => total + Math.abs(row.amount),
+    0
   );
-  const categoryTotal = Math.abs(
-    categorySummary?.[kind] ?? categorySummary?.total ?? 0
-  );
-
   return rows.map((row) => {
     const selected = state.subcategoryFilter?.category === category
       && state.subcategoryFilter.key === row.key;
-
+    const scale = (Math.abs(row.amount) / (categoryTotal || 1)).toFixed(4);
     return `
       <button type="button"
               class="budget-bar-row${selected ? ' is-category-selected' : ''}"
               data-subcategory-category="${esc(category)}"
               data-subcategory-filter="${esc(row.key)}"
               aria-pressed="${selected ? 'true' : 'false'}">
-        <div class="budget-bar-row__label">${esc(row.label)}</div>
-        <div class="budget-bar-row__track">
-          <div class="budget-bar-row__fill budget-bar-row__fill--${kind}"
-                style="--bar-scale:${(Math.abs(row.amount) / (Math.abs(categoryTotal) || 1)).toFixed(4)}"></div>
-        </div>
-        <div class="budget-bar-row__amount">
+        <span class="budget-bar-row__label">${esc(row.label)}</span>
+        <span class="budget-bar-row__track">
+          <span class="budget-bar-row__fill budget-bar-row__fill--${kind}"
+                style="--bar-scale:${scale}"></span>
+        </span>
+        <span class="budget-bar-row__amount">
           ${amountByRole(row.amount, 'flow').text}
-        </div>
+        </span>
       </button>`;
   }).join('');
 }
 
 function renderSubcategoryBreakdowns() {
-  if (!state.categoryFilterKeys.length) return '';
+  if (!state.categoryFilter) return '';
   
   const entries = visibleEntries({ ignoreSubcategory: true });
   
+  const category = state.categoryFilter;
+  const rows = subcategoryRows(category, entries);
+  const total = entries
+    .filter((entry) => entry.category === category)
+    .reduce((sum, entry) => sum + (entry.is_pending ? 0 : Number(entry.amount) || 0), 0);
+  const titleId = `budget-subcategory-${category}`;
 
-  return state.categoryFilterKeys.map((category) => {
-    const rows = subcategoryRows(category, entries);
-    const summary = state.summary?.byCategory?.find(
-      (item) => item.category === category
-    );
-    const kind = expenseCategories().some((item) => item.key === category)
-      ? 'expenses'
-      : 'income';
-    const total = summary?.[kind] ?? 0;
-
-    return rows
-      ? `<section class="budget-subcategory-breakdown-row"
-                 aria-label="${esc(categoryLabel(category))}"
-                 labelledby="budget-subcategory-${category}">
-            <h3 class="budget-chart-block__title" id="budget-subcategory-${category}">
-              <span>${esc(categoryLabel(category))}</span>
-              <div class="budget-chart-block__total">${amountByRole(total, 'total').text}</div>
-            </h3>
-            <div class="budget-chart-block__rows">
-              ${rows}
-           </div>
-         </section>`
-      : '';
-  }).join('');
+  return rows
+    ? `<section class="budget-subcategory-breakdown-row"
+                aria-labelledby="${esc(titleId)}">
+          <h3 class="budget-chart-block__title" id="${esc(titleId)}">
+            <span>${esc(categoryLabel(category))}</span>
+            <div class="budget-chart-block__total">${amountByRole(total, 'total').text}</div>
+          </h3>
+          <div class="budget-chart-block__rows">
+            ${rows}
+          </div>
+        </section>`
+    : '';
 }
 
 function toggleCategoryFilter(category) {
-  const selected = new Set(state.categoryFilterKeys);
-  if (selected.has(category)) {
-    selected.delete(category);
-    if (state.subcategoryFilter?.category === category) {
-      state.subcategoryFilter = null;
-    }
-  } else {
-    selected.add(category);
-  }
-
-  state.categoryFilterKeys = [...selected];
+  state.categoryFilter = state.categoryFilter === category ? null : category;
+  state.subcategoryFilter = null;
   renderBody();
+  focusFilterResult({ category });
 }
 
 function toggleSubcategoryFilter(category, key) {
   const current = state.subcategoryFilter;
-  state.subcategoryFilter =
-    current?.category === category && current.key === key
-      ? null
-      : { category, key };
+  if(current?.category === category && current.key === key) {
+      state.subcategoryFilter = null;
+  } else {
+    state.subcategoryFilter = { category, key };
+  }
 
   renderBody();
+  focusFilterResult({ category, subcategoryKey: key });
 }
 
-function renderEntriesByCategory(entries) {
-  return state.categoryFilterKeys.map((category) => {
-    const categoryEntries = entries.filter((entry) => entry.category === category);
-    if (!categoryEntries.length) return '';
+async function clearBudgetFilters() {
+  const reloadMonth = state.accountFilterId != null;
+  resetSessionFilters(state);
+  if (reloadMonth) await loadMonth(state.month);
+  renderBody();
+  focusFilterResult({ focusList: true });
+}
 
-    const categoryHeading = `
-      <h3 class="budget-category-group__title">
-        ${esc(categoryLabel(category))}
-      </h3>`;
+function focusFilterResult({ category = null, subcategoryKey = null, focusList = false } = {}) {
+  const body = _container?.querySelector('#budget-body');
+  if (!body) return;
 
-    // Il bucket privato non deve esporre informazioni sulle sottocategorie.
-    if (category === MASKED_CATEGORY) {
-      return `<section class="budget-category-group">
-        ${categoryHeading}
-        ${entryRows(categoryEntries)}
-      </section>`;
-    }
+  const narrow = window.matchMedia
+    ? window.matchMedia('(max-width: 959px)').matches
+    : window.innerWidth < 960;
+  const listHeading = body.querySelector('.budget-list-header__title');
+  if (narrow) {
+    body.querySelector('.budget-list-section')?.scrollIntoView?.({ block: 'start' });
+    listHeading?.focus({ preventScroll: true });
+    return;
+  }
 
-    const bySubcategory = new Map();
-    for (const entry of categoryEntries) {
-      const key = entry.details_hidden ? '' : (entry.subcategory ?? '');
-      if (!bySubcategory.has(key)) bySubcategory.set(key, []);
-      bySubcategory.get(key).push(entry);
-    }
-
-    const knownKeys = getSubcategories(category).map((item) => item.key);
-    const subcategoryKeys = [
-      ...knownKeys.filter((key) => bySubcategory.has(key)),
-      ...[...bySubcategory.keys()]
-        .filter((key) => key && !knownKeys.includes(key))
-        .sort((a, b) => subcategoryLabel(a).localeCompare(subcategoryLabel(b))),
-      ...(bySubcategory.has('') ? [''] : []),
-    ];
-
-    const subcategoryGroups = subcategoryKeys.map((key) => `
-      <section class="budget-subcategory-group">
-        <h4 class="budget-subcategory-group__title">
-          ${esc(key ? subcategoryLabel(key) : t('budget.withoutSubcategory'))}
-        </h4>
-        ${entryRows(bySubcategory.get(key), { categoryGrouped: true })}
-      </section>
-    `).join('');
-
-    return `<section class="budget-category-group">
-      ${categoryHeading}
-      ${subcategoryGroups}
-    </section>`;
-  }).join('');
+  let target = null;
+  if (!focusList && category != null) {
+    const selector = subcategoryKey == null
+      ? 'button[data-category-filter]'
+      : 'button[data-subcategory-category][data-subcategory-filter]';
+    target = [...body.querySelectorAll(selector)].find((button) => (
+      subcategoryKey == null
+        ? button.dataset.categoryFilter === category
+        : button.dataset.subcategoryCategory === category
+          && button.dataset.subcategoryFilter === subcategoryKey
+    ));
+  }
+  (target ?? listHeading)?.focus();
 }
 
 /* DIE LISTE NACH ZUSTAENDIGEN (#1057).
@@ -1971,8 +1990,7 @@ function visibleEntries({ ignoreSubcategory = false } = {}) {
         (user) => user.id === state.responsibleFilterId
       );
 
-    const matchesCategory = state.categoryFilterKeys.length === 0
-      || state.categoryFilterKeys.includes(entry.category);
+    const matchesCategory = !state.categoryFilter || entry.category === state.categoryFilter;
 
     const filter = state.subcategoryFilter;
     const matchesSubcategory = ignoreSubcategory
@@ -2016,18 +2034,33 @@ function renderEntries() {
 
   const rows = visibleEntries();
   if (!rows.length) {
+    const activeFilters = [];
+    if (state.categoryFilter) {
+      activeFilters.push(state.subcategoryFilter
+        ? `${categoryLabel(state.categoryFilter)} > ${subcategoryLabel(state.subcategoryFilter.key)}`
+        : categoryLabel(state.categoryFilter));
+    }
+    if (state.responsibleFilterId != null) {
+      activeFilters.push(responsibleFilterLabel(state) || t('budget.responsibleLabel'));
+    }
+    if (state.accountFilterId != null) {
+      activeFilters.push(accountName(state.accountFilterId) || t('budget.accountLabel'));
+    }
+    const filterLabel = activeFilters.join(', ');
+
     // Gefiltert und nichts uebrig: der Leerzustand muss den FILTER benennen,
     // nicht "noch keine Buchungen" behaupten - sonst sieht es aus, als waere
     // der Monat leer.
     return emptyStateHTML({
-      icon: 'user-round-x',
-      title: t('budget.responsibleFilterEmptyTitle'),
-      description: t('budget.responsibleFilterEmptyDescription'),
-    });
-  }
-
-  if (state.categoryFilterKeys.length > 1) {
-    return renderEntriesByCategory(rows);
+      variant: 'no-results',
+      icon: 'filter-x',
+      title: t('budget.filterEmptyTitle', { filter: filterLabel }),
+      action: {
+        label: t('budget.clearFilters'),
+        icon: 'x',
+        attrs: { 'data-clear-budget-filters': '' },
+      },
+    })
   }
 
   if (state.groupByResponsible) {
@@ -2105,9 +2138,10 @@ function entryRows(list, { fullDate = false, categoryGrouped = false } = {}) {
      * Achse, nach der das Balkendiagramm über der Liste den Monat aufteilt;
      * die Unterkategorie verfeinert sie und wird beim Öffnen der Buchung
      * gezeigt und geändert. */
-    const categoryMeta = categoryGrouped
-    ? (e.details_hidden || !e.subcategory ? '' : subcategoryLabel(e.subcategory))
-    : categoryLabel(e.category);
+    const categoryMeta = categoryGrouped || state.categoryFilter != null
+      ? (e.details_hidden || !e.subcategory ? '' : subcategoryLabel(e.subcategory))
+      : categoryLabel(e.category);
+    const categoryMetaText = categoryMeta ? ` · ${esc(categoryMeta)}` : '';
     const acctName = accountName(e.account_id);
     /* Das Trennzeichen gehört IN den Span, nicht davor: das Konto fällt unter
      * 480px Containerbreite weg (budget.css), und ein Separator davor bliebe
@@ -2199,7 +2233,7 @@ function entryRows(list, { fullDate = false, categoryGrouped = false } = {}) {
         <div class="budget-entry__indicator ${indClass}"></div>
         <div class="list-row__main">
           ${titleCell}
-          <div class="list-row__meta budget-entry__meta">${date}${upcomingMark} · ${esc(categoryMeta)}${acctMeta}${recurTag}${receiptMark}${responsibleMark}</div>
+          <div class="list-row__meta budget-entry__meta">${date}${upcomingMark}${categoryMetaText}${acctMeta}${recurTag}${receiptMark}${responsibleMark}</div>
         </div>
         <div class="budget-entry__amount ${amtClass}">${amountText}</div>
         <div class="list-row__actions">${rowActions}
@@ -5422,6 +5456,17 @@ export const __test = {
   },
 
   renderSubcategoryBreakdowns,
+  budgetChipHtml,
+  ledgerStatusText,
+  clearBudgetFiltersForTest(container) {
+    _container = container;
+    clearBudgetFilters();
+  },
+  loadMonthForTest: loadMonth,
+  focusFilterResultForTest(container, options) {
+    _container = container;
+    focusFilterResult(options);
+  },
   toggleBalanceDetailsForTest(container) {
     _container = container;
     toggleBalanceDetails();

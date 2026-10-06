@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { withoutHtmlComments } from './source-text.js';
 import { eachRule } from './css-rules.js';
+import { installMiniDom } from './mini-dom.js';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8').replace(/\r/g, '');
 
@@ -1630,13 +1631,15 @@ test('Filterzustand überlebt den Modulwechsel nicht', () => {
   // der Reset nicht kennt, faellt hier auf.
   const dirty = {
     accountFilterId: 7, responsibleFilterId: 3, responsibleFilterCachedName: 'Clara',
-    loanFilterId: 9, loanStatusFilter: 'paid', accountsShowArchived: true,
+    loanFilterId: 9, loanStatusFilter: 'paid', accountsShowArchived: true, categoryFilter: 'housing',
+    subcategoryFilter: { category: 'housing', key: 'rent_mortgage' }
   };
   const target = { ...dirty, activeTab: 'loans', month: '2026-03', groupByResponsible: true };
   budgetUi.resetSessionFilters(target);
   assert.deepEqual(target, {
     accountFilterId: null, responsibleFilterId: null, responsibleFilterCachedName: '',
     loanFilterId: null, loanStatusFilter: 'active', accountsShowArchived: false,
+    categoryFilter: null, subcategoryFilter: null,
     // Bleibt bewusst: der Reiter, der Monat (render setzt ihn selbst) und die
     // Gruppierung, die eine gespeicherte Anzeige-Einstellung ist.
     activeTab: 'loans', month: '2026-03', groupByResponsible: true,
@@ -1670,6 +1673,167 @@ test('Filterzustand überlebt den Modulwechsel nicht', () => {
 
 test('der Konto-Drilldown verliert den Fokus nicht', () => {
   assert.match(budget, /_container\.querySelector\('#budget-body'\)\?\.focus\(\)/);
+});
+
+test('Einzelkategorie- und Unterkategoriefilter stimmen mit Liste und Status überein', async () => {
+  const state = budgetUi.state;
+  const previous = { ...state };
+  const previousApi = globalThis.__apiStub;
+  try {
+    Object.assign(state, {
+      month: '2026-06', currency: 'EUR', ledgerQuery: '', ledgerResults: null,
+      categoryFilter: 'transport', subcategoryFilter: { category: 'transport', key: 'fuel' },
+      accountFilterId: null, responsibleFilterId: null, groupByResponsible: false,
+      meta: {
+        expenseCategories: [
+          { key: 'transport', name: 'Transport' },
+          { key: 'food', name: 'Food' },
+        ],
+        incomeCategories: [],
+        subcategories: { transport: [{ key: 'fuel', name: 'Fuel' }] },
+      },
+      entries: [
+        { id: 1, title: 'Fuel', amount: -40, date: '2026-06-03', category: 'transport', subcategory: 'fuel' },
+        { id: 2, title: 'Bus', amount: -10, date: '2026-06-04', category: 'transport', subcategory: 'tickets', is_pending: true },
+        { id: 3, title: 'Groceries', amount: -20, date: '2026-06-05', category: 'food', subcategory: 'groceries' },
+        { id: 4, title: 'Private details', amount: -15, date: '2026-06-06', category: '__private__', details_hidden: true },
+      ],
+    });
+
+    assert.deepEqual(budgetUi.visibleEntries().map((entry) => entry.id), [1]);
+    assert.match(budgetUi.renderEntries(), /Fuel/);
+    assert.match(budgetUi.budgetChipHtml(), /budget\.catTransport &gt; budget\.subcatFuel/);
+    assert.doesNotMatch(budgetUi.renderEntries(), /Groceries|Private details/);
+
+    state.subcategoryFilter = null;
+    assert.deepEqual(budgetUi.visibleEntries().map((entry) => entry.id), [1, 2]);
+    assert.match(budgetUi.ledgerStatusText(), /2/);
+    assert.match(budgetUi.ledgerStatusText(), /40,00/);
+    assert.doesNotMatch(budgetUi.ledgerStatusText(), /50,00/);
+    const page = uebersicht({
+      currency: 'EUR', categoryFilter: 'transport', subcategoryFilter: null,
+      entries: state.entries,
+    });
+    assert.match(page, /id="budget-ledger-status"[^>]*role="status"[^>]*>budget\.ledgerSearchCount/);
+    assert.match(page, /budget\.ledgerSearchCount[^<]*40,00/);
+
+    state.categoryFilter = '__private__';
+    assert.deepEqual(budgetUi.visibleEntries().map((entry) => entry.id), [4]);
+    assert.match(budgetUi.renderEntries(), /budget\.maskedEntryTitle/);
+    assert.doesNotMatch(budgetUi.renderEntries(), /Private details/);
+
+    state.month = '2026-07';
+    globalThis.__apiStub = {
+      get: async (url) => {
+        if (url.startsWith('/budget?month=')) return { data: [
+          { id: 5, title: 'July fuel', amount: -25, date: '2026-07-03', category: 'transport', subcategory: 'fuel' },
+        ] };
+        if (url.startsWith('/budget/summary')) return { data: { income: 0, expenses: -25, balance: -25, byCategory: [], pending: { count: 0 } } };
+        return { data: { loans: [], summary: {} } };
+      },
+    };
+    state.categoryFilter = 'transport';
+    state.subcategoryFilter = { category: 'transport', key: 'fuel' };
+    await budgetUi.loadMonthForTest('2026-07');
+    assert.equal(state.month, '2026-07');
+    assert.equal(state.categoryFilter, 'transport', 'Monatswechsel behaelt den aktiven Filter');
+    assert.deepEqual(budgetUi.visibleEntries().map((entry) => entry.id), [5]);
+
+    state.categoryFilter = 'housing';
+    const restoreDom = installMiniDom();
+    try {
+      assert.match(budgetUi.renderEntries(), /data-clear-budget-filters/);
+      state.categoryFilter = null;
+      state.subcategoryFilter = null;
+      state.responsibleFilterId = 42;
+      state.responsibleFilterCachedName = 'Mara';
+      assert.match(budgetUi.renderEntries(), /Mara/);
+      assert.match(budgetUi.renderEntries(), /data-clear-budget-filters/);
+    } finally {
+      restoreDom();
+    }
+  } finally {
+    Object.assign(state, previous);
+    globalThis.__apiStub = previousApi;
+  }
+});
+
+test('Filter-Delegation haengt einmal am Seitenaufbau, nicht an jedem Body-Render', () => {
+  assert.equal([...budget.matchAll(/budgetBody\?\.addEventListener\('click'/g)].length, 1);
+  const renderBodyStart = budget.indexOf('function renderBody()');
+  const renderBodyEnd = budget.indexOf('\nfunction budgetChipHtml()', renderBodyStart);
+  assert.ok(renderBodyStart >= 0 && renderBodyEnd > renderBodyStart);
+  assert.doesNotMatch(budget.slice(renderBodyStart, renderBodyEnd), /budgetBody\?\.addEventListener\('click'/);
+});
+
+test('Filter leeren baut die volle Liste neu und setzt mobil den Fokus dorthin', () => {
+  const state = budgetUi.state;
+  const previous = { ...state };
+  const restoreDom = installMiniDom();
+  const previousMatchMedia = global.window.matchMedia;
+  let html = '';
+  let focused = false;
+  let scrolled = false;
+  const heading = { focus() { focused = true; } };
+  const listSection = { scrollIntoView() { scrolled = true; } };
+  const body = {
+    replaceChildren() { html = ''; },
+    insertAdjacentHTML(_position, value) { html = value; },
+    setAttribute() {},
+    querySelector(selector) {
+      if (selector === '.budget-list-header__title') return heading;
+      if (selector === '.budget-list-section') return listSection;
+      return null;
+    },
+    querySelectorAll() { return []; },
+  };
+  const container = {
+    querySelector(selector) { return selector === '#budget-body' ? body : null; },
+    querySelectorAll() { return []; },
+    classList: { toggle() {} },
+  };
+  try {
+    Object.assign(state, {
+      activeTab: 'budget', loadError: null, month: '2026-06', currency: 'EUR',
+      entries: [{ id: 1, title: 'Fuel', amount: -40, date: '2026-06-03', category: 'transport', subcategory: 'fuel' }],
+      summary: { income: 0, expenses: -40, balance: -40, byCategory: [], pending: { count: 0 } },
+      categoryFilter: 'transport', subcategoryFilter: { category: 'transport', key: 'fuel' },
+      responsibleFilterId: null, accountFilterId: null, groupByResponsible: false,
+    });
+    global.window.matchMedia = () => ({ matches: true });
+    budgetUi.clearBudgetFiltersForTest(container);
+
+    assert.equal(state.categoryFilter, null);
+    assert.equal(state.subcategoryFilter, null);
+    assert.match(html, /Fuel/);
+    assert.equal(focused, true);
+    assert.equal(scrolled, true);
+  } finally {
+    Object.assign(state, previous);
+    global.window.matchMedia = previousMatchMedia;
+    restoreDom();
+  }
+});
+
+test('Kategorieauswahl behaelt am Desktop den Fokus auf dem Balken', () => {
+  const previousMatchMedia = global.window.matchMedia;
+  let focused = false;
+  const categoryButton = {
+    dataset: { categoryFilter: 'transport' },
+    focus() { focused = true; },
+  };
+  const body = {
+    querySelector() { return null; },
+    querySelectorAll() { return [categoryButton]; },
+  };
+  const container = { querySelector() { return body; } };
+  try {
+    global.window.matchMedia = () => ({ matches: false });
+    budgetUi.focusFilterResultForTest(container, { category: 'transport' });
+    assert.equal(focused, true);
+  } finally {
+    global.window.matchMedia = previousMatchMedia;
+  }
 });
 
 test('das Inline-Kategorie-Overlay ist ein vollwertiger Dialog', () => {
@@ -2443,7 +2607,6 @@ function uebersicht(extra = {}) {
   let html = '';
   const body = {
     replaceChildren() { html = ''; },
-    addEventListener: (e) => {},
     insertAdjacentHTML(_pos, markup) { html += markup; },
     setAttribute() {}, querySelector: () => null,
   };
@@ -3353,6 +3516,8 @@ test('Statistik: Ausgabenbalken tragen Donut-Farbe und Anteil, keine zweite Lege
   assert.match(code, /--bar-fill:\$\{DONUT_COLORS\[/, 'der Balken nimmt die Segmentfarbe');
   assert.match(code, /budget-bar-row__share/, 'der Balken nennt seinen Anteil');
   assert.doesNotMatch(code, /budget-stats__legend budget-stats__legend--wrap/, 'die Donut-Legende zaehlt nicht alles ein zweites Mal auf');
+  const barFill = [...eachRule(budgetCss)].find((r) => r.selector.trim() === '.budget-bar-row__fill');
+  assert.match(barFill.body, /display:\s*block/);
   const fill = [...eachRule(budgetCss)].find((r) => r.selector.trim() === '.budget-bar-row__fill--expenses');
   assert.match(fill.body, /background-color:\s*var\(--bar-fill,\s*var\(--module-accent\)\)/);
 });
@@ -3745,9 +3910,713 @@ test('#1656: die Textfelder des Darlehens lassen nicht mehr zu, als der Server a
   }
 });
 
-test('#1593 subcategories: mostra il totale e scala le barre sul totale della categoria', () => {
+// ─── #1668: die uebrigen Saetze des Servers, und genauere im Darlehens-Dialog ─
+// Nach #1656 zeigte nur der Darlehens-Dialog seine Absagen uebersetzt und am
+// Feld. 13 weitere Stellen dieser Seite schrieben `err.data.error` in einen
+// Toast - englisch oder, fuer das Konto, deutsch. Und vier Saetze des Dialogs
+// waren ungenau: "tilgt nicht" fuer ein Darlehen, das zu lange laeuft, "Anzahl
+// eingeben" fuer 361 Raten, "zu viele" ohne Zahl, und der allgemeine Satz an
+// Titel, Notizen, Waehrung und Konto.
+
+const SERVER_SENTENCE = 'A sentence this client has never seen.';
+
+function withOnline(fn) {
+  const before = globalThis.navigator;
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true, writable: true });
+  try { return fn(); } finally {
+    Object.defineProperty(globalThis, 'navigator', { value: before, configurable: true, writable: true });
+  }
+}
+
+test('#1668: der Darlehens-Dialog nennt die Grenze und hat fuer jedes Feld einen eigenen Satz', () => withOnline(() => {
+  const refusal = (reason, extra = {}) => ({ status: 400, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE, code: 400, reason, ...extra } });
+  for (const [reason, extra, fields, message] of [
+    // Laeuft zu lange: ein eigener Satz mit der Grenze, nicht mehr "tilgt nicht".
+    ['loan_term_too_long', { max: 600 }, '#lm-initial-repayment', 'budget.loanTermTooLong{"max":600}'],
+    ['loan_not_amortizing', {}, '#lm-initial-repayment', 'budget.loanPreviewInvalid'],
+    // 361 Raten: der Satz nennt 360.
+    ['loan_installments_invalid', { max: 360 }, '#lm-installments', 'budget.loanInstallmentsRange{"max":360}'],
+    // Zu viele gezahlte Raten: mit dem Maximum, wo der Server es kennt.
+    ['loan_paid_installments_exceed', { max: 12 }, '#lm-paid', 'budget.loanPaidInstallmentsMax{"max":12}'],
+    ['loan_paid_installments_exceed', { max: 0 }, '#lm-paid', 'budget.loanPaidInstallmentsMax{"max":0}'],
+    // Ohne (lesbare) Grenze bleibt der Satz ohne Zahl - nie "undefined" oder "NaN".
+    ['loan_paid_installments_exceed', {}, '#lm-paid', 'budget.loanPaidInstallmentsTooMany'],
+    ['loan_paid_installments_exceed', { max: '12' }, '#lm-paid', 'budget.loanPaidInstallmentsTooMany'],
+    ['loan_paid_installments_exceed', { max: -1 }, '#lm-paid', 'budget.loanPaidInstallmentsTooMany'],
+    ['loan_paid_installments_exceed', { max: 1.5 }, '#lm-paid', 'budget.loanPaidInstallmentsTooMany'],
+    ['loan_installments_invalid', { max: null }, '#lm-installments', 'budget.loanInstallmentsRequired'],
+    ['loan_term_too_long', {}, '#lm-initial-repayment', 'budget.loanPreviewInvalid'],
+    // Ein Satz ohne Grenze nimmt keine an, auch wenn eine mitkommt.
+    ['loan_not_amortizing', { max: 600 }, '#lm-initial-repayment', 'budget.loanPreviewInvalid'],
+    // Eigene Saetze statt des allgemeinen.
+    ['loan_title_invalid', {}, '#lm-title', 'budget.loanTitleInvalid'],
+    ['loan_notes_invalid', {}, '#lm-notes', 'budget.loanNotesInvalid'],
+    ['loan_currency_invalid', {}, '#lm-currency', 'budget.loanCurrencyInvalid'],
+    ['loan_account_invalid', {}, '#lm-account', 'budget.accountNotFound'],
+  ]) {
+    assert.deepEqual(budgetUi.loanSaveError(refusal(reason, extra)), { fields, message }, `${reason} ${JSON.stringify(extra)}`);
+  }
+  // Kein Feld des Formulars traegt mehr den allgemeinen Satz.
+  for (const [reason, [fields, key]] of budgetUi.LOAN_REFUSALS) {
+    if (fields) assert.notEqual(key, 'budget.loanSaveFailed', `${reason}: der allgemeine Satz steht an ${fields}`);
+  }
+}));
+
+test('#1668: eine Absage der Budget-Seite wird nie zum Satz des Servers', () => withOnline(() => {
+  const at = (status, reason, extra = {}) => ({ status, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE, code: status, reason, ...extra } });
+  // Jeder gefuehrte Grund: sein Feld, sein Satz - an einer 400 und an einer 409.
+  assert.ok(budgetUi.BUDGET_REFUSALS.size >= 30, `Vorbedingung: die Liste ist gefuellt (${budgetUi.BUDGET_REFUSALS.size})`);
+  for (const [reason, [fields, key]] of budgetUi.BUDGET_REFUSALS) {
+    for (const status of [400, 409]) {
+      const got = budgetUi.budgetError(at(status, reason));
+      assert.deepEqual(got, { fields, message: key }, `${reason} an ${status}`);
+      assert.notEqual(got.message, SERVER_SENTENCE);
+    }
+  }
+  // Einzeln gepinnt, was der Auftrag nennt: Feld und Satz je Grund.
+  for (const [reason, fields, key] of [
+    ['entry_account_invalid', '#bm-account', 'budget.accountNotFound'],
+    ['entry_amount_invalid', '#bm-amount, #cb-amount', 'budget.validAmountRequired'],
+    ['entry_amount_exceeds_loan', '#bm-amount', 'budget.amountExceedsLoanRemaining'],
+    ['entry_date_invalid', '#bm-date, #cb-date', 'calendar.invalidDate'],
+    ['entry_subcategory_invalid', '#bm-subcategory', 'budget.subcategoryRequired'],
+    ['series_start_too_early', '#bm-date', 'budget.seriesStartTooEarly'],
+    ['entry_responsible_invalid', null, 'budget.responsibleNotMember'],
+    ['account_name_invalid', '#am-name', 'common.titleRequired'],
+    ['account_credit_limit_invalid', '#am-credit-limit', 'budget.validAmountRequired'],
+    ['category_exists', null, 'category.errorExists'],
+    ['subcategory_exists', null, 'category.errorSubExists'],
+    ['loan_settled', null, 'budget.loanAlreadyPaid'],
+    ['loan_installment_paid', null, 'budget.loanInstallmentAlreadyPaid'],
+    ['loan_payment_amount_exceeds', null, 'budget.amountExceedsLoanRemaining'],
+  ]) {
+    assert.deepEqual(budgetUi.budgetError(at(400, reason)), { fields, message: key }, reason);
+  }
+  // Kein, ein unbekannter oder ein boesartiger Grund: der allgemeine Satz der
+  // Stelle - beim Speichern der eine, sonst der andere.
+  for (const reason of [undefined, null, '', 'some_future_reason', '__proto__', 'constructor', 'toString', 7]) {
+    for (const status of [400, 409]) {
+      assert.deepEqual(budgetUi.budgetError(at(status, reason)), { fields: null, message: 'common.errorOccurred' }, String(reason));
+      assert.deepEqual(
+        budgetUi.budgetError(at(status, reason), 'budget.saveFailed'), { fields: null, message: 'budget.saveFailed' }, String(reason),
+      );
+    }
+  }
+  // Ein Grund des Darlehens-Formulars gehoert dem Dialog, nicht dieser Liste.
+  assert.deepEqual(budgetUi.budgetError(at(400, 'loan_title_invalid')), { fields: null, message: 'common.errorOccurred' });
+  // Andere Antworten: der Satz der App, wo sie einen hat - sonst der allgemeine.
+  for (const [err, key] of [
+    [{ status: 403, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE } }, 'common.errorNoPermission'],
+    [{ status: 403, data: { error: SERVER_SENTENCE, reason: 'module_read_only' } }, 'settings.permReadOnlyBanner'],
+    [{ status: 404, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE } }, 'common.errorNotFound'],
+    [{ status: 500, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE } }, 'common.errorServer'],
+    [{ status: 0, message: SERVER_SENTENCE }, 'common.errorOfflineMutation'],
+    [{ status: 429, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE } }, 'common.errorOccurred'],
+    [{ message: SERVER_SENTENCE }, 'common.errorOccurred'],
+    [new TypeError(SERVER_SENTENCE), 'common.errorOccurred'],
+    [undefined, 'common.errorOccurred'],
+  ]) {
+    assert.deepEqual(budgetUi.budgetError(err), { fields: null, message: key }, JSON.stringify(err));
+  }
+  // Ein Grund zaehlt nur an einer Absage, nicht an einem Serverfehler.
+  assert.deepEqual(budgetUi.budgetError(at(500, 'entry_account_invalid')), { fields: null, message: 'common.errorServer' });
+}));
+
+test('#1668: die Absage steht am Feld des offenen Dialogs, sonst im Toast', () => withOnline(() => {
+  const toasts = [];
+  const marks = [];
+  const yuvomi = global.window.yuvomi;
+  global.window.yuvomi = { ...yuvomi, showToast: (...args) => toasts.push(args) };
+  globalThis.__reportFieldError = (input, message) => marks.push([input.id, message]);
+  const field = (id, { hidden = false, isConnected = true } = {}) => ({ id, isConnected, closest: (sel) => (sel === '[hidden]' && hidden ? {} : null) });
+  const panelWith = (fields) => ({
+    querySelectorAll: (selector) => selector.split(',').map((s) => s.trim().slice(1)).map((id) => fields[id]).filter(Boolean),
+  });
+  const refusal = (reason, status = 400) => ({ status, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE, code: status, reason } });
+  const shown = (fn) => { toasts.length = 0; marks.length = 0; fn(); return { toasts: [...toasts], marks: [...marks] }; };
+  try {
+    // Buchungsdialog: das Konto gibt es nicht mehr -> am Konto-Feld, kein Toast.
+    const entryPanel = panelWith({ 'bm-account': field('bm-account'), 'bm-amount': field('bm-amount'), 'bm-date': field('bm-date') });
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('entry_account_invalid'), { panel: entryPanel, fallback: 'budget.saveFailed' })),
+      { toasts: [], marks: [['bm-account', 'budget.accountNotFound']] },
+    );
+    // Derselbe Grund in zwei Dialogen: gezeigt wird am Feld, das der offene hat.
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('entry_amount_invalid'), { panel: entryPanel })),
+      { toasts: [], marks: [['bm-amount', 'budget.validAmountRequired']] },
+    );
+    const confirmPanel = panelWith({ 'cb-amount': field('cb-amount'), 'cb-date': field('cb-date') });
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('entry_amount_invalid'), { panel: confirmPanel })),
+      { toasts: [], marks: [['cb-amount', 'budget.validAmountRequired']] },
+    );
+    // Kontodialog.
+    const accountPanel = panelWith({ 'am-name': field('am-name'), 'am-credit-limit': field('am-credit-limit', { hidden: true }) });
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('account_name_invalid'), { panel: accountPanel })),
+      { toasts: [], marks: [['am-name', 'common.titleRequired']] },
+    );
+    // Ein verstecktes Feld (Kreditlimit bei einem Girokonto) kann nichts zeigen: Toast.
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('account_credit_limit_invalid'), { panel: accountPanel })),
+      { toasts: [['budget.validAmountRequired', 'danger']], marks: [] },
+    );
+    // Ebenso ein Feld, dessen Dialog inzwischen zu ist.
+    const closed = panelWith({ 'bm-account': field('bm-account', { isConnected: false }) });
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('entry_account_invalid'), { panel: closed })),
+      { toasts: [['budget.accountNotFound', 'danger']], marks: [] },
+    );
+    // Ohne Dialog (Rate abhaken, Loeschen): immer der Toast, mit dem Satz der App.
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('loan_installment_paid', 409))),
+      { toasts: [['budget.loanInstallmentAlreadyPaid', 'danger']], marks: [] },
+    );
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('entry_account_invalid'))),
+      { toasts: [['budget.accountNotFound', 'danger']], marks: [] },
+    );
+    // Ein Grund ohne Feld bleibt auch im Dialog ein Toast.
+    assert.deepEqual(
+      shown(() => budgetUi.showBudgetError(refusal('entry_responsible_invalid'), { panel: entryPanel })),
+      { toasts: [['budget.responsibleNotMember', 'danger']], marks: [] },
+    );
+    // Nichts davon ist der Satz des Servers.
+    for (const reason of [...budgetUi.BUDGET_REFUSALS.keys(), 'unknown_reason', undefined]) {
+      const out = shown(() => budgetUi.showBudgetError(refusal(reason), { panel: entryPanel }));
+      const texts = [...out.toasts.map((t) => t[0]), ...out.marks.map((m) => m[1])];
+      assert.equal(texts.length, 1, String(reason));
+      assert.notEqual(texts[0], SERVER_SENTENCE, String(reason));
+    }
+  } finally {
+    global.window.yuvomi = yuvomi;
+    delete globalThis.__reportFieldError;
+  }
+}));
+
+/** Jeder Grund, den eine Datei des Servers einer Absage mitgibt. */
+function serverReasons(file) {
+  const src = read(`../server/routes/budget/${file}`);
+  return new Set([
+    // refusal('x', ...), refusals('x', ...) - auch ueber einen Zeilenumbruch.
+    ...[...src.matchAll(/\brefusals?\(\s*'([a-z]+(?:_[a-z]+)+)'/g)].map((m) => m[1]),
+    // ['x', str(...)] - die Pruefungen, die eine Route nur bei gesetztem Feld faehrt.
+    ...[...src.matchAll(/\['([a-z]+(?:_[a-z]+)+)', (?:str|num|oneOf|rrule|validateDate|validateColor|intervalCountCheck)\(/g)].map((m) => m[1]),
+    // reason: 'x' an einer ausgeschriebenen Antwort.
+    ...[...src.matchAll(/\breason: '([a-z]+(?:_[a-z]+)+)'/g)].map((m) => m[1]),
+  ]);
+}
+
+test('#1668: jeder Grund der Budget-Routen ist eingeordnet, jedes Feld gibt es, jeder Satz steht in jeder Sprache', () => {
+  const atServer = new Set(['entries.js', 'accounts.js', 'categories.js', 'loans.js'].flatMap((file) => [...serverReasons(file)]));
+  assert.ok(atServer.size >= 55, `zu wenige Gruende gelesen (${atServer.size}) - das Muster greift nicht mehr`);
+  for (const probe of ['entry_account_invalid', 'series_end_refused', 'series_start_too_early', 'entry_start_date_invalid', 'account_credit_limit_invalid', 'loan_settled', 'category_exists']) {
+    assert.ok(atServer.has(probe), `Vorbedingung: der Leser sieht ${probe}`);
+  }
+  // Wer welchen Grund liest: der Darlehens-Dialog seine, die Verwaltung der
+  // Kategorien ihre (category-manager.js), alles andere diese Seite.
+  const loanForm = new Set(budgetUi.LOAN_REFUSALS.keys());
+  const READ_BY_CATEGORY_MANAGER = ['category_in_use', 'category_last', 'subcategory_in_use', 'subcategory_last'];
+  const manager = read('../public/components/category-manager.js');
+  for (const reason of READ_BY_CATEGORY_MANAGER) {
+    assert.ok(atServer.has(reason), `${reason} schickt der Server nicht mehr`);
+    assert.ok(manager.includes(`'${reason}'`), `${reason} liest die Kategorien-Verwaltung nicht mehr`);
+  }
+  const elsewhere = new Set([...loanForm, ...READ_BY_CATEGORY_MANAGER]);
+  const known = new Set(budgetUi.BUDGET_REFUSALS.keys());
+  assert.deepEqual(
+    [...atServer].filter((r) => !known.has(r) && !elsewhere.has(r)), [],
+    'ein Grund des Servers ohne Feld und Satz auf der Seite',
+  );
+  assert.deepEqual([...known].filter((r) => !atServer.has(r)), [], 'die Seite fuehrt einen Grund, den der Server nicht mehr schickt');
+  assert.deepEqual([...known].filter((r) => loanForm.has(r)), [], 'ein Grund steht in beiden Listen');
+
+  // Keine Absage der Schreibrouten geht am Grund vorbei. Uebrig bleiben die
+  // Lesewege (month, q, range, anchor) - die fragt kein Dialog.
+  for (const [file, allowed] of [['entries.js', 3], ['accounts.js', 0], ['categories.js', 0], ['loans.js', 0]]) {
+    const src = read(`../server/routes/budget/${file}`);
+    const bare = [...src.matchAll(/status\((400|409)\)\.json\(\{(?:(?!\}\);)[\s\S])*?\}\)/g)].filter((m) => !/reason:/.test(m[0]));
+    assert.equal(bare.length, allowed, `${file}: ${bare.map((m) => m[0].slice(0, 70)).join(' | ')}`);
+  }
+
+  // Jedes genannte Feld steht in einem Dialog der Seite.
+  for (const [reason, [fields]] of budgetUi.BUDGET_REFUSALS) {
+    for (const selector of (fields ?? '').split(',').map((part) => part.trim()).filter(Boolean)) {
+      assert.match(selector, /^#(bm|am|cb)-[a-z-]+$/, `${reason}: ${selector}`);
+      assert.ok(budget.includes(`id="${selector.slice(1)}"`), `${reason}: das Feld ${selector} steht in keinem Dialog`);
+    }
+  }
+
+  // Jeder Satz steht in jeder Sprache; die neuen ohne Gedankenstrich, nicht
+  // deutsch und nicht englisch in einer dritten Sprache, mit ihrem Platzhalter.
+  const dir = new URL('../public/locales/', import.meta.url);
+  const files = readdirSync(dir).filter((name) => name.endsWith('.json'));
+  assert.ok(files.length >= 26, `zu wenige Sprachdateien gelesen (${files.length})`);
+  const locales = files.map((name) => [name, JSON.parse(readFileSync(new URL(name, dir), 'utf8'))]);
+  const NEW = new Map([
+    ['budget.loanTermTooLong', true], ['budget.loanInstallmentsRange', true], ['budget.loanPaidInstallmentsMax', true],
+    ['budget.loanTitleInvalid', false], ['budget.loanNotesInvalid', false], ['budget.loanCurrencyInvalid', false],
+    ['budget.accountNotFound', false], ['budget.saveFailed', false], ['budget.loanAlreadyPaid', false],
+    ['budget.loanInstallmentAlreadyPaid', false], ['budget.amountExceedsLoanRemaining', false],
+    ['budget.responsibleNotMember', false], ['budget.seriesStartTooEarly', false],
+  ]);
+  const keys = new Set(['common.errorOccurred', ...NEW.keys()]);
+  for (const list of [budgetUi.BUDGET_REFUSALS, budgetUi.LOAN_REFUSALS]) {
+    for (const [, [, key, keyWithMax]] of list) { keys.add(key); if (keyWithMax) keys.add(keyWithMax); }
+  }
+  // Jeder neue Satz wird auch gebraucht - sonst stuende er nur in den Dateien.
+  for (const key of NEW.keys()) assert.ok(budget.includes(`'${key}'`), `${key} benutzt die Seite nicht`);
+  for (const key of keys) {
+    const seen = new Map();
+    for (const [name, data] of locales) {
+      const text = key.split('.').reduce((node, part) => node?.[part], data);
+      assert.ok(typeof text === 'string' && text.trim().length > 0, `${name}: ${key} fehlt`);
+      if (!NEW.has(key)) continue;
+      assert.doesNotMatch(text, /[\u2013\u2014]/, `${name}: ${key} traegt einen Gedankenstrich`);
+      // Die Grenze ist ein Platzhalter, keine feste Zahl im Text.
+      assert.equal(text.includes('{{max}}'), NEW.get(key), `${name}: ${key} und {{max}}`);
+      assert.doesNotMatch(text, /360|600/, `${name}: ${key} nennt die Grenze fest`);
+      seen.set(name, text);
+    }
+    for (const [name, text] of seen) {
+      if (name === 'de.json' || name === 'en.json') continue;
+      assert.notEqual(text, seen.get('de.json'), `${name}: ${key} ist der deutsche Satz`);
+      assert.notEqual(text, seen.get('en.json'), `${name}: ${key} ist der englische Satz`);
+    }
+  }
+});
+
+test('#1668: keine Stelle der Budget-Seite schreibt den Satz des Servers in einen Toast', () => {
+  // Ohne Kommentare: die Erklaerung, was hier frueher stand, darf es nennen.
+  const code = budget.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /showToast\([^;]*err(?:or)?\??\.(?:data\??\.error|message)/, 'ein Toast zeigt den Text des Fehlers');
+  assert.doesNotMatch(code, /err(?:or)?\??\.data\??\.error/, 'die Seite liest den Satz des Servers');
+  // Die 13 Stellen von damals und der Verbuchen-Dialog laufen ueber eine Funktion.
+  const calls = [...code.matchAll(/(?<!function )\bshowBudgetError\(err\b/g)].length;
+  assert.equal(calls, 14, `showBudgetError(err, ...) steht ${calls}x`);
+  // Die drei Dialoge geben sich selbst mit, damit die Absage am Feld landet.
+  assert.equal([...code.matchAll(/showBudgetError\(err, \{ panel, fallback: BUDGET_SAVE_FAILED \}\)/g)].length, 3);
+});
+
+test('#1668: der Dialog nennt beim Pruefen am Feld, wie viele Raten das Darlehen hat', () => {
+  const save = budget.slice(budget.indexOf('async function saveLoanFromPanel('), budget.indexOf('function openLoanModal('));
+  assert.ok(save.length > 1000, 'Vorbedingung: saveLoanFromPanel gefunden');
+  assert.match(save, /t\('budget\.loanPaidInstallmentsMax', \{ max: installment_count \}\)/, 'ohne Zins: die Ratenanzahl des Formulars');
+  assert.match(save, /t\('budget\.loanPaidInstallmentsMax', \{ max: term \}\)/, 'mit Zins: die Laufzeit aus der Vorschau');
+  assert.doesNotMatch(save, /loanPaidInstallmentsTooMany/, 'eine Pruefung am Feld sagt noch "zu viele" ohne Zahl');
+});
+
+/* R16 (Critique 2026-10-05, P1 mobil): TITEL UND ZEITRAUM TEILEN SICH ZEILE 1.
+ * Der Budgetkopf stand mobil auf allen sieben Reitern bei 162px - drei Zeilen,
+ * und auf vier Reitern trug die mittlere nur eine Bildunterschrift. Mit
+ * `page-toolbar--period-inline` gibt der Titel nach, der Stepper steht am
+ * Zeilenende; gemessen 117px auf jedem Reiter. Der Guard haelt die drei
+ * Stuecke, ohne die die Zeile wieder aufgeht: die Klasse im Markup, die
+ * nachgebende Titelbasis und den Center-Slot ohne volle Zeile. */
+test('R16: der Budgetkopf fuehrt den Zeitraum mobil in der Titelzeile', () => {
+  assert.match(budget, /<div class="page-toolbar[^"]*\bpage-toolbar--period-inline\b[^"]*\bbudget-nav\b[^"]*">/,
+    'der Budgetkopf traegt `page-toolbar--period-inline`');
+  const mobile = [...eachRule(layoutCss)].filter((r) => r.at.some((a) => /max-width:\s*767px/.test(a))
+    && r.selector.includes('.page-toolbar--period-inline'));
+  const of = (tail) => mobile.filter((r) => r.selector.trim().endsWith(tail)).map((r) => r.body).join(';');
+  assert.match(of(':not(.page-toolbar--in-group) > .page-toolbar__title'), /flex:\s*1 1 0/,
+    'der Titel gibt nach (Basis 0) - mit der Basis der Large-Title-Regel nimmt er die ganze Zeile');
+  assert.match(of('> .page-toolbar__center'), /flex:\s*0 0 auto/,
+    'der Center-Slot beansprucht keine eigene Zeile und gibt selbst nicht nach');
+  // Der Ruecksprung haelt hier keinen Platz frei und nimmt ihn auch nicht vom
+  // Titel (R16 Schritt 2b): er liegt durchsichtig UEBER dem Wert, zwischen den
+  // Pfeilen. Ein Tipp aufs Monatslabel springt zum laufenden Monat, der Knopf
+  // behaelt Namen und Platz in der Tab-Folge, und kein Pfeil bewegt sich (#1200).
+  assert.match(of('> .page-toolbar__center > .period-stepper__reset.is-current'), /display:\s*none/);
+  const ueber = of('> .page-toolbar__center > .period-stepper__reset');
+  assert.match(ueber, /position:\s*absolute/);
+  assert.match(ueber, /inset-inline:\s*var\(--target-base\)/, 'zwischen den Pfeilen, nicht darueber');
+  assert.match(ueber, /color:\s*transparent/);
+  assert.doesNotMatch(ueber, /order:|opacity:|visibility:|display:\s*none/, 'kein Umsortieren, und der Knopf bleibt fokussierbar samt Ring');
+  assert.match(of('> .page-toolbar__center > .period-stepper__value--away'), /color:\s*var\(--module-accent\)/,
+    'der Wert sagt im Modulton, dass man neben dem laufenden Zeitraum steht');
+  assert.equal(mobile.filter((r) => /:has\(> \.page-toolbar__center > \.btn--secondary/.test(r.selector)).length, 0,
+    'der Titel verlaesst das Bild nicht mehr, solange der Ruecksprung steht');
+  // Das Label traegt die Kurzform des Monats und eine feste Breite.
+  assert.match(budget, /lbl\.setAttribute\('data-short', ym \? formatMonthYear\(y, m, \{ month: 'short' \}\)/);
+  const label = [...eachRule(budgetCss)].filter((r) => r.at.some((a) => /max-width:\s*767px/.test(a))
+    && r.selector.trim() === '.page-toolbar--period-inline .budget-nav__label');
+  assert.ok(label.some((r) => /inline-size:/.test(r.body)), 'feste Labelbreite - sonst wandern die Pfeile beim Blaettern');
+});
+
+test('R16: formatMonthYear kennt die Kurzform des Monats', async () => {
+  const i18n = await import('../public/i18n.js');
+  const long = i18n.formatMonthYear(2026, 9);
+  const short = i18n.formatMonthYear(2026, 9, { month: 'short' });
+  assert.ok(long.length > 0 && short.length > 0);
+  assert.ok(short.length <= long.length, `${short} ist nicht laenger als ${long}`);
+  assert.match(short, /2026/);
+});
+
+/* R16 (Critique 2026-10-05, P1 mobil): VERWALTUNG VOR INHALT IN DER AUFTEILUNG.
+ * Gemessen 390x844: Gruppen-Panel 284px + Gruppenkopf 197px + Salden 145px,
+ * erste Ausgabe y=975. Schmal ist die Gruppenwahl jetzt EINE Zeile, die die
+ * Liste aufklappt, und der Gruppenkopf nur noch die Aktionszeile (y=499). */
+test('R16 Aufteilung: schmal ist die Gruppenwahl eine Zeile, die die Liste aufklappt', () => {
+  const src = read('../public/pages/split-expenses.js');
+  const css = read('../public/styles/split-expenses.css');
+  assert.match(src, /<button type="button" class="split-group-switch" id="split-group-switch"\s+aria-expanded="false" aria-controls="split-groups-body">/);
+  assert.match(src, /<div class="split-groups-body" id="split-groups-body">[\s\S]*id="split-status-filter"[\s\S]*id="split-groups"/,
+    'Suche, Aktiv/Archiviert und die Liste stehen IM aufklappbaren Teil');
+  // Ohne aktive Gruppe steht die Liste offen - sonst laegen Leerzustand und „+" hinter einem namenlosen Knopf.
+  assert.match(src, /const open = _groupPickerOpen \|\| !group;/);
+  assert.match(src, /btn\.setAttribute\('aria-expanded', String\(open\)\)/);
+  const all = [...eachRule(css)].map((r) => ({ ...r, selector: r.selector.trim() }));
+  const narrow = all.filter((r) => r.at.some((a) => /@container split-page \(max-width:\s*639px\)/.test(a)));
+  const base = all.find((r) => r.at.length === 0 && r.selector === '.split-group-switch');
+  assert.match(base?.body ?? '', /display:\s*none/, 'breit steht die Liste als Spalte - die Zeile ist dort ausgeblendet');
+  assert.ok(narrow.some((r) => r.selector === '.split-group-switch' && /display:\s*flex/.test(r.body)));
+  assert.ok(narrow.some((r) => r.selector === '.split-groups-panel:not(.split-groups-panel--open) > .split-groups-body'
+    && /display:\s*none/.test(r.body)), 'zugeklappt ist die Liste aus dem Fluss');
+  // Der Gruppenkopf wiederholt den Namen nicht: geclippt, nicht entfernt.
+  const clipped = narrow.find((r) => r.selector.includes('.split-group-header .split-group-name'));
+  assert.match(clipped?.body ?? '', /clip-path:\s*inset\(50%\)/);
+  assert.doesNotMatch(clipped?.body ?? '', /display:\s*none/, 'die Ueberschrift der Gruppe bleibt im Baum');
+});
+
+/* R16 Schritt 2 (Critique 2026-10-05, P1 Bausteine): das Budget sprach in
+ * seinen Reitern Dialekt. Drei Regeln, je gegen den Stand davor rot gelaufen. */
+test('R16 Budget: Gewichte kommen aus den Tokens, ohne !important - und der Betrag hat EIN Gewicht', () => {
+  const funde = [];
+  for (const file of ['budget.css', 'split-expenses.css', 'subscriptions.css']) {
+    for (const rule of eachRule(read(`../public/styles/${file}`))) {
+      const w = rule.body.match(/font-weight:\s*([^;]+)/);
+      if (!w) continue;
+      if (/^\d+/.test(w[1].trim()) || /!important/.test(w[1])) funde.push(`${file}: ${rule.selector.trim()} { font-weight: ${w[1].trim()} }`);
+    }
+  }
+  assert.deepStrictEqual(funde, [], 'Gewicht als Literal oder mit !important');
+
+  const body = (file, sel) => [...eachRule(read(`../public/styles/${file}`))]
+    .filter((r) => r.selector.split(',').map((s) => s.trim()).includes(sel)).map((r) => r.body).join(';');
+  for (const [file, sel] of [
+    ['budget.css', '.budget-entry__amount'],
+    ['budget.css', '.budget-account__balance'],
+    ['budget.css', '.budget-plan-row__amounts strong'],
+    ['split-expenses.css', '.split-expense__amount'],
+  ]) {
+    assert.match(body(file, sel), /font-weight:\s*var\(--font-weight-semibold\)/, `${sel}: ein Betrag steht semibold`);
+  }
+});
+
+test('R16 Budget: "Darlehenstransaktionen" ist eine Ueberschrift auf der Buehne, kein div', () => {
+  const src = read('../public/pages/budget.js');
+  assert.match(src, /<h2 class="budget-loan-transactions__title u-section-title">\$\{t\('budget\.loanTransactions'\)\}<\/h2>/);
+  assert.doesNotMatch(src, /<div class="budget-loan-transactions__title"/);
+});
+
+test('R16 Aufteilung: null ist weder Gewinn noch Schuld - der Ton haengt am Betrag', () => {
+  const src = read('../public/pages/split-expenses.js');
+  assert.match(src, /class="metric-card\$\{owed\.length \? ' metric-card--positive' : ''\}"/);
+  assert.match(src, /class="metric-card\$\{owing\.length \? ' metric-card--negative' : ''\}"/);
+  assert.doesNotMatch(src, /class="metric-card metric-card--(?:positive|negative)">\s*<div class="metric-card__label">\$\{t\('splitExpenses\.you/);
+});
+
+/* R16 Schritt 2b - EIN ZEITRAUM-KOPF (Critique 2026-10-05, P1 Bausteine): fuenf
+ * Module bauten den Stepper je selbst, vier kopierten die Reset-Regel, der
+ * Schichtplan hatte sie nicht. Verhalten am Baustein, nicht am Quelltext.
+ * Gegen den Stand davor rot gelaufen (Baustein fehlte). */
+test('R16: der Zeitraum-Stepper ist ein Baustein - Reihenfolge, Namen, Reset-Regel', async () => {
+  const { periodStepperHtml, syncPeriodReset } = await import('../public/utils/period-stepper.js');
+  const html = periodStepperHtml({
+    prev: { id: 'p', label: 'Vorheriger Monat' },
+    value: { id: 'v', className: 'x__label', text: 'Mai <2026>', live: true },
+    next: { id: 'n', label: 'Nächster Monat', keys: 'j' },
+    reset: { id: 'r', className: 'x__today', label: 'Aktuell', current: true },
+  });
+  const at = (needle) => html.indexOf(needle);
+  assert.ok(at('id="p"') > 0 && at('id="p"') < at('id="v"') && at('id="v"') < at('id="n"') && at('id="n"') < at('id="r"'),
+    'Markup = Tab-Folge: zurueck, Wert, vor, dahinter der Reset');
+  assert.match(html, /<button type="button" class="btn btn--icon period-stepper__prev" id="p" aria-label="Vorheriger Monat">/);
+  assert.match(html, /class="btn btn--icon period-stepper__next" id="n" aria-label="Nächster Monat" aria-keyshortcuts="j"/);
+  assert.match(html, /<span class="period-stepper__value x__label" id="v" aria-live="polite">Mai &lt;2026&gt;<\/span>/, 'der Wert ist Klartext und wird escaped');
+  assert.match(html, /class="btn btn--secondary period-stepper__reset x__today is-current" id="r" inert>Aktuell</,
+    'im laufenden Zeitraum verborgen per .is-current + inert, nie per hidden');
+  assert.doesNotMatch(html, /\shidden[\s>]/);
+  assert.throws(() => periodStepperHtml({ prev: {}, next: { label: 'x' } }), /braucht einen Namen/, 'ein Pfeil ohne Objekt-Namen wird nicht ausgeliefert');
+
+  // Reset-Regel: Fokus zuerst zum Zurueck-Pfeil, dann inert; der Wert merkt "daneben".
+  const classes = () => { const set = new Set(); return { toggle: (c, on) => (on ? set.add(c) : set.delete(c)), contains: (c) => set.has(c) }; };
+  const valueEl = { classList: classes() };
+  const btn = { classList: classes(), inert: false, parentElement: { querySelector: () => valueEl } };
+  let focused = false;
+  const prevBtn = { focus: () => { focused = true; } };
+  const root = { querySelector: (sel) => (sel === '#r' ? btn : sel === '#p' ? prevBtn : null) };
+  const zuvor = global.document;
+  try {
+    global.document = { ...zuvor, activeElement: btn };
+    syncPeriodReset(root, { reset: '#r', isCurrent: false, prev: '#p' });
+    assert.equal(btn.inert, false);
+    assert.equal(focused, false);
+    assert.equal(valueEl.classList.contains('period-stepper__value--away'), true);
+    syncPeriodReset(root, { reset: '#r', isCurrent: true, prev: '#p' });
+    assert.equal(focused, true, 'der Fokus wandert VOR dem inert-Werden');
+    assert.equal(btn.inert, true);
+    assert.equal(btn.classList.contains('is-current'), true);
+    assert.equal(valueEl.classList.contains('period-stepper__value--away'), false);
+  } finally {
+    global.document = zuvor;
+  }
+});
+
+test('R16: Kalender, Essensplan, Budget, Haushaltshilfe und Schichtplan bauen ihren Stepper nicht selbst', () => {
+  const seiten = { calendar: 4, meals: 4, budget: 4, housekeeping: 4, schedule: 4 };
+  for (const name of Object.keys(seiten)) {
+    const src = withoutHtmlComments(withoutComments(read(`../public/pages/${name}.js`)));
+    assert.match(src, /import \{ periodStepperHtml(?:, syncPeriodReset)?(?:, swapPeriod)? \} from '\/utils\/period-stepper\.js';/, `${name}.js nimmt den Baustein`);
+    assert.match(src, /periodStepperHtml\(\{\s*prev: \{[^}]*label:[\s\S]*?value: \{[\s\S]*?next: \{[^}]*label:[\s\S]*?reset: \{/, `${name}.js: prev, value, next, reset`);
+    assert.doesNotMatch(src, /classList\.toggle\('is-current'/, `${name}.js fuehrt keine eigene Fassung der Reset-Regel`);
+    assert.doesNotMatch(src, /\.inert = isCurrent/, `${name}.js setzt inert nicht selbst`);
+  }
+});
+
+// Critique 2026-10-05 (R16): bei 390px waren vier von sechs Kontonamen gekappt
+// ("Gemeinsames Gi..."): 118px Namensspalte, einzeilig mit Ellipse. Der Name
+// ist die Identitaet der Zeile; er darf auf zwei Zeilen umbrechen. Der Saldo
+// daneben bleibt unzerbrechlich (Re-Critique 2026-09-28 P1-2).
+test('R16: ein Kontoname bricht auf zwei Zeilen um, statt gekappt zu werden', () => {
+  const rule = [...eachRule(budgetCss)].find((r) => r.selector.trim() === '.budget-account__name-text' && !r.at.length);
+  assert.ok(rule, 'die Regel ist nicht auffindbar - der Guard misst dann nichts');
+  assert.match(rule.body, /-webkit-line-clamp:\s*2/);
+  assert.doesNotMatch(rule.body, /white-space:\s*nowrap/, 'einzeilig mit Ellipse war der Befund');
+  assert.match(rule.body, /overflow-wrap:\s*anywhere/, 'ein langes Wort ohne Leerzeichen laeuft sonst unter den Saldo');
+  const figures = [...eachRule(budgetCss)].find((r) => r.selector.trim() === '.budget-account__figures' && !r.at.length);
+  assert.match(figures?.body ?? '', /flex:\s*0 0 auto/, 'die Saldo-Spalte schrumpft weiter nie');
+});
+
+// --------------------------------------------------------
+// Faelligkeitstag am Darlehen (#1631)
+// --------------------------------------------------------
+
+const { setDisplayTimeZone } = await import('../public/utils/timezone.js');
+
+/** Uhr und Haushaltszone der SEITE fuer die Dauer von `fn` stellen. */
+async function seiteAm(iso, zone, fn) {
+  setDisplayTimeZone(zone);
+  mock.timers.enable({ apis: ['Date'], now: new Date(iso) });
+  try {
+    return await fn();
+  } finally {
+    mock.timers.reset();
+    setDisplayTimeZone(null);
+  }
+}
+
+const tagesDarlehen = (over = {}) => ({
+  id: 7, title: 'Autokredit', borrower: 'Bank', direction: 'borrowed', status: 'active',
+  total_amount: 1200, remaining_amount: 1200, paid_amount: 0, paid_installments: 0,
+  installment_count: 12, installment_amount: 100, is_settled: false, payments: [],
+  next_installment_number: 1, next_due_month: '2026-10', next_due_date: '2026-10-27', due_day: 27, ...over,
+});
+
+test('#1631: die Karte nennt das volle Datum, wenn der Server eines liefert, sonst den Monat', () => {
+  // formatDate ist im Loader String(d): steht der Schluessel in der Zeile, ist
+  // der Datums-Formatierer gerufen worden und nicht der des Monats.
+  assert.equal(budgetUi.loanNextDueLabel(tagesDarlehen()), '2026-10-27');
+  assert.match(budgetUi.renderLoanCard(tagesDarlehen()),
+    /<span>budget\.loanNextDue\{"month":"2026-10-27"\}<\/span>/);
+  // Der Server klemmt, die Karte zeigt, was er liefert - sie rechnet nicht selbst.
+  assert.match(budgetUi.renderLoanCard(tagesDarlehen({ due_day: 31, next_due_month: '2026-02', next_due_date: '2026-02-28' })),
+    /budget\.loanNextDue\{"month":"2026-02-28"\}/);
+
+  // Ohne Faelligkeitstag wie bisher der Monat.
+  const ohne = tagesDarlehen({ due_day: null, next_due_date: null });
+  assert.equal(budgetUi.loanNextDueLabel(ohne), 'Oktober 2026');
+  assert.match(budgetUi.renderLoanCard(ohne), /<span>budget\.loanNextDue\{"month":"Oktober 2026"\}<\/span>/);
+  // Ein Darlehen aus einer Antwort, die das Feld noch nicht kennt (Cache), bleibt beim Monat.
+  const { next_due_date: _weg, ...alt } = tagesDarlehen();
+  assert.equal(budgetUi.loanNextDueLabel(alt), 'Oktober 2026');
+
+  // Getilgt: keine naechste Rate, auch mit Faelligkeitstag.
+  const getilgt = tagesDarlehen({ is_settled: true, next_due_month: null, next_due_date: null, next_installment_number: null });
+  assert.equal(budgetUi.loanNextDueLabel(getilgt), 'budget.loanPaidStatus');
+});
+
+/**
+ * "Als bezahlt markieren" als Programm: der echte markLoanPayment() gegen einen
+ * API-Stub, der mitschreibt, was gesendet wird, und einen Toast, der mitschreibt,
+ * was die Seite sagt.
+ */
+async function markiere(loan) {
+  const posts = [];
+  const toasts = [];
+  const apiBefore = globalThis.__apiStub;
+  const yuvomiBefore = global.window.yuvomi;
+  const saved = { ...budgetUi.state };
+  const loans = { loans: [loan], summary: {} };
+  globalThis.__apiStub = {
+    post: async (url, body) => { posts.push([url, body]); return { data: { payment: { id: 55 } } }; },
+    get: async (url) => (url === '/budget/loans' ? { data: loans } : { data: url.startsWith('/budget/summary') ? {} : [] }),
+  };
+  global.window.yuvomi = { ...yuvomiBefore, showToast: (...args) => toasts.push(args) };
+  // Ein Container ohne #budget-body: renderBody() kehrt dort um, der Rest laeuft.
+  budgetUi.renderBodyForTest({ querySelector: () => null, querySelectorAll: () => [] });
+  budgetUi.state.loans = loans;
+  try {
+    await budgetUi.markLoanPayment(loan.id);
+    return { posts, toasts };
+  } finally {
+    Object.assign(budgetUi.state, saved);
+    globalThis.__apiStub = apiBefore;
+    global.window.yuvomi = yuvomiBefore;
+  }
+}
+
+test('#1631: "Als bezahlt markieren" schickt das Datum des Servers und nennt es in der Bestaetigung', async () => {
+  // Getippt am 2. November (Haushalt) fuer die Rate vom 27. Oktober.
+  await seiteAm('2026-11-01T11:00:00Z', 'Pacific/Kiritimati', async () => {
+    assert.equal(todayKey(), '2026-11-02', 'Vorbedingung: der Haushalt steht auf dem 2. November');
+    const { posts, toasts } = await markiere(tagesDarlehen());
+    assert.deepEqual(posts, [['/budget/loans/7/payments', { installment_number: 1, amount: 100, paid_date: '2026-10-27' }]]);
+    assert.equal(toasts.length, 1);
+    assert.equal(toasts[0][0], 'budget.loanPaymentAddedOnToast{"date":"2026-10-27"}', 'die Bestaetigung nennt das gebuchte Datum');
+    assert.equal(typeof toasts[0][3], 'function', 'und behaelt ihr Rueckgaengig');
+  });
+  // Frueh getippt: am 25. fuer den 27.
+  await seiteAm('2026-10-25T10:00:00Z', 'Europe/Berlin', async () => {
+    const { posts } = await markiere(tagesDarlehen());
+    assert.equal(posts[0][1].paid_date, '2026-10-27');
+  });
+});
+
+test('#1631: ohne Faelligkeitstag faellt "Als bezahlt markieren" auf den Tag des Haushalts zurueck', async () => {
+  // 01.11. 11:00 UTC: in Pacific/Kiritimati (UTC+14) ist es der 02.11. Wer den
+  // UTC-Tag naehme, schickte den 1.
+  await seiteAm('2026-11-01T11:00:00Z', 'Pacific/Kiritimati', async () => {
+    const ohne = tagesDarlehen({ due_day: null, next_due_date: null });
+    assert.equal(budgetUi.loanPaymentDate(ohne), '2026-11-02');
+    const { posts, toasts } = await markiere(ohne);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0][1].paid_date, '2026-11-02');
+    assert.equal(toasts[0][0], 'budget.loanPaymentAddedOnToast{"date":"2026-11-02"}');
+    // Auch eine Antwort ohne das Feld (alter Cache) bucht auf heute statt auf nichts.
+    const { next_due_date: _weg, ...alt } = tagesDarlehen();
+    assert.equal((await markiere(alt)).posts[0][1].paid_date, '2026-11-02');
+  });
+});
+
+/** Ein Darlehens-Dialog aus Feldwerten - nur was saveLoanFromPanel() liest. */
+function darlehensPanel(werte) {
+  const felder = Object.fromEntries(Object.entries(werte).map(([id, value]) => [
+    `#${id}`,
+    typeof value === 'object' ? { id, ...value } : { id, value, validity: { badInput: false } },
+  ]));
+  return { querySelector: (sel) => felder[sel] ?? null, querySelectorAll: () => [] };
+}
+
+async function speichere(werte, { loan = null } = {}) {
+  const sent = [];
+  const marks = [];
+  const apiBefore = globalThis.__apiStub;
+  const yuvomiBefore = global.window.yuvomi;
+  const saved = { ...budgetUi.state };
+  const write = async (url, body) => { sent.push([url, body]); return { data: {} }; };
+  globalThis.__apiStub = {
+    post: write, put: write,
+    get: async (url) => ({ data: url === '/budget/loans' ? { loans: [], summary: {} } : (url.startsWith('/budget/summary') ? {} : []) }),
+  };
+  globalThis.__reportFieldError = (input, message) => marks.push([input.id, message]);
+  global.window.yuvomi = { ...yuvomiBefore, showToast() {} };
+  budgetUi.renderBodyForTest({ querySelector: () => null, querySelectorAll: () => [] });
+  try {
+    await budgetUi.saveLoanFromPanel(darlehensPanel({
+      'lm-borrower': 'Bank', 'lm-title': 'Autokredit', 'lm-start': '2026-10', 'lm-notes': '',
+      'lm-amount': '1200', 'lm-installments': '12', 'lm-direction': 'borrowed', ...werte,
+    }), { disabled: false, textContent: '' }, { loan });
+    return { sent, marks };
+  } finally {
+    Object.assign(budgetUi.state, saved);
+    globalThis.__apiStub = apiBefore;
+    global.window.yuvomi = yuvomiBefore;
+    delete globalThis.__reportFieldError;
+  }
+}
+
+test('#1631: der Dialog hat EIN optionales Feld fuer den Faelligkeitstag, 1 bis 31', () => {
+  const neu = budgetUi.loanFormFieldsHtml(null, { startMonth: '2026-03' });
+  const feld = neu.match(/<input[^>]*id="lm-due-day"[^>]*>/)?.[0] ?? '';
+  assert.equal([...neu.matchAll(/id="lm-due-day"/g)].length, 1, 'genau ein Feld');
+  assert.match(feld, /type="number"/);
+  assert.match(feld, /min="1" max="31"/);
+  assert.match(feld, /step="1"/);
+  assert.match(feld, /value=""/, 'neu: leer, also kein Tag');
+  assert.match(neu, /<label class="form-label" for="lm-due-day">budget\.loanDueDayLabel<\/label>/,
+    'beschriftet und ohne Pflichtzeichen');
+  assert.match(feld, /aria-describedby="lm-due-day-hint"/);
+  assert.match(neu, /id="lm-due-day-hint">budget\.loanDueDayHint</);
+
+  const bestehend = budgetUi.loanFormFieldsHtml(
+    { id: 1, title: 'Auto', borrower: 'Bank', total_amount: 1200, installment_count: 12, start_month: '2025-01', due_day: 27 },
+    { startMonth: '2026-03' },
+  );
+  assert.match(bestehend, /id="lm-due-day"[^>]*value="27"/, 'Bearbeiten zeigt den gespeicherten Tag');
+});
+
+test('#1631: Speichern schickt den Tag als Zahl, ein leeres Feld als null', async () => {
+  const mit = await speichere({ 'lm-due-day': '27' });
+  assert.equal(mit.sent.length, 1);
+  assert.equal(mit.sent[0][0], '/budget/loans');
+  assert.strictEqual(mit.sent[0][1].due_day, 27);
+  assert.deepEqual(mit.marks, []);
+
+  const leer = await speichere({ 'lm-due-day': '' });
+  assert.strictEqual(leer.sent[0][1].due_day, null);
+
+  // Bearbeiten: ein geleertes Feld nimmt den Tag wieder weg - null, nicht "fehlt".
+  const weg = await speichere({ 'lm-due-day': '' }, { loan: { id: 4, total_amount: 1200, due_day: 27 } });
+  assert.equal(weg.sent[0][0], '/budget/loans/4');
+  assert.ok('due_day' in weg.sent[0][1]);
+  assert.strictEqual(weg.sent[0][1].due_day, null);
+});
+
+test('#1631: ein ungueltiger Tag wird am Feld gemeldet und nicht gesendet', async () => {
+  for (const value of ['0', '32', '1.5', '-1']) {
+    const out = await speichere({ 'lm-due-day': value });
+    assert.deepEqual(out.sent, [], `"${value}" geht nicht an den Server`);
+    assert.deepEqual(out.marks, [['lm-due-day', 'budget.loanDueDayInvalid']], `"${value}" steht am Feld`);
+  }
+  // Unlesbares ("abc") liefert ein type=number-Feld als '' mit badInput.
+  const unlesbar = await speichere({ 'lm-due-day': { value: '', validity: { badInput: true } } });
+  assert.deepEqual(unlesbar.sent, []);
+  assert.deepEqual(unlesbar.marks, [['lm-due-day', 'budget.loanDueDayInvalid']]);
+});
+
+test('#1631: die Absage des Servers zu einem ungueltigen Tag steht am Feld, im Satz der Oberflaeche', () => withOnline(() => {
+  const err = { status: 400, message: SERVER_SENTENCE, data: { error: SERVER_SENTENCE, code: 400, reason: 'loan_due_day_invalid' } };
+  assert.deepEqual(budgetUi.loanSaveError(err), { fields: '#lm-due-day', message: 'budget.loanDueDayInvalid' });
+}));
+
+test('#1631: die neuen Saetze stehen in jeder Sprache, uebersetzt und mit ihrem Platzhalter', () => {
+  const dir = new URL('../public/locales/', import.meta.url);
+  const files = readdirSync(dir).filter((name) => name.endsWith('.json'));
+  assert.ok(files.length >= 26, `zu wenige Sprachdateien gelesen (${files.length})`);
+  const locales = new Map(files.map((name) => [name, JSON.parse(readFileSync(new URL(name, dir), 'utf8')).budget]));
+  for (const key of ['loanDueDayLabel', 'loanDueDayHint', 'loanDueDayInvalid', 'loanPaymentAddedOnToast']) {
+    for (const [name, budgetKeys] of locales) {
+      const text = budgetKeys[key];
+      assert.ok(typeof text === 'string' && text.trim().length > 0, `${name}: budget.${key} fehlt`);
+      assert.doesNotMatch(text, /[–—]/, `${name}: budget.${key} traegt einen Gedankenstrich`);
+      if (key === 'loanPaymentAddedOnToast') assert.match(text, /\{\{date\}\}/, `${name}: der Platzhalter fehlt`);
+      if (name === 'de.json' || name === 'en.json') continue;
+      assert.notEqual(text, locales.get('de.json')[key], `${name}: budget.${key} ist der deutsche Satz`);
+      assert.notEqual(text, locales.get('en.json')[key], `${name}: budget.${key} ist der englische Satz`);
+    }
+  }
+});
+test('#1593: Unterkategorien zeigen den Gesamtwert und folgen der bekannten Reihenfolge', () => {
   const state = budgetUi.state;
   const previous = { ...state };
+  const barRowRule = [...eachRule(budgetCss)].find(
+    (rule) => rule.at.length === 0 && rule.selector.trim() === '.budget-bar-row'
+  );
+  assert.ok(barRowRule, 'Budget bar row styles exist');
+  assert.match(barRowRule.body, /min-block-size:\s*var\(--target-base\)/);
 
   const scales = (html, kind) =>
     [...html.matchAll(new RegExp(
@@ -3758,29 +4627,38 @@ test('#1593 subcategories: mostra il totale e scala le barre sul totale della ca
   try {
     Object.assign(state, {
       currency: 'EUR',
-      categoryFilterKeys: ['housing'],
+      categoryFilter: 'housing',
       subcategoryFilter: null,
-      responsibleFilterId: null,
+      responsibleFilterId: 10,
       meta: {
         expenseCategories: [{ key: 'housing', name: 'Abitazione' }],
         incomeCategories: [],
-        subcategories: { housing: [{ key: 'rent' }, { key: 'utilities' }] },
+        subcategories: { housing: [{ key: 'rent_mortgage' }, { key: 'utilities' }] },
       },
       entries: [
-        { category: 'housing', subcategory: 'rent_mortgage', amount: -700 },
-        { category: 'housing', subcategory: 'utilities', amount: -200 },
+        { category: 'housing', subcategory: 'utilities', amount: -100, responsible_users: [{ id: 10 }] },
+        { category: 'housing', subcategory: 'rent_mortgage', amount: -700, responsible_users: [{ id: 10 }] },
+        { category: 'housing', subcategory: 'utilities', amount: -1000, responsible_users: [{ id: 20 }] },
       ],
       summary: {
-        byCategory: [{ category: 'housing', income: 0, expenses: -900, total: -900 }],
+        byCategory: [{ category: 'housing', income: 0, expenses: -1800, total: -1800 }],
       },
     });
 
     const expensesHtml = budgetUi.renderSubcategoryBreakdowns();
-    assert.match(expensesHtml, /budget-chart-block__total">[^<]*900,00/);
-    assert.deepEqual(scales(expensesHtml, 'expenses'), [0.7778, 0.2222]);
+    assert.match(expensesHtml, /aria-labelledby="budget-subcategory-housing"/);
+    assert.match(expensesHtml, /id="budget-subcategory-housing"/);
+    assert.match(expensesHtml, /budget-chart-block__total">[^<]*800,00/);
+    assert.deepEqual(scales(expensesHtml, 'expenses'), [0.875, 0.125]);
+    const rows = [...expensesHtml.matchAll(/<button\b[\s\S]*?<\/button>/g)].map(([html]) => html);
+    assert.equal(rows.length, 2);
+    for (const html of rows) assert.doesNotMatch(html, /<div\b/, 'Buttons must not contain div elements');
+    assert.ok(expensesHtml.indexOf('data-subcategory-filter="rent_mortgage"')
+      < expensesHtml.indexOf('data-subcategory-filter="utilities"'));
 
     Object.assign(state, {
-      categoryFilterKeys: ['salary'],
+      categoryFilter: 'salary',
+      responsibleFilterId: null,
       meta: {
         expenseCategories: [],
         incomeCategories: [{ key: 'salary', name: 'Stipendio' }],
@@ -3803,44 +4681,6 @@ test('#1593 subcategories: mostra il totale e scala le barre sul totale della ca
 
     assert.match(incomeHtml, /budget-bar-row__fill budget-bar-row__fill--income/);
     assert.doesNotMatch(incomeHtml, /budget-bar-row__fill budget-bar-row__fill--expenses/);
-  } finally {
-    Object.assign(state, previous);
-  }
-});
-
-test('#1593 subcategories: le barre delle spese scalano sul totale delle spese', () => {
-  const state = budgetUi.state;
-  const previous = { ...state };
-
-  try {
-    Object.assign(state, {
-      currency: 'EUR',
-      categoryFilterKeys: ['housing'],
-      subcategoryFilter: null,
-      responsibleFilterId: null,
-      meta: {
-        expenseCategories: [{ key: 'housing', name: 'Abitazione' }],
-        incomeCategories: [],
-        subcategories: { housing: [{ key: 'rent' }, { key: 'utilities' }] },
-      },
-      entries: [
-        { category: 'housing', subcategory: 'rent_mortgage', amount: -700 },
-        { category: 'housing', subcategory: 'utilities', amount: -200 },
-      ],
-      summary: {
-        byCategory: [{ category: 'housing', income: 0, expenses: -900, total: -900 }],
-      },
-    });
-
-    const html = budgetUi.renderSubcategoryBreakdowns();
-
-    assert.match(html, /budget-bar-row__fill budget-bar-row__fill--expenses/);
-    assert.doesNotMatch(html, /budget-bar-row__fill budget-bar-row__fill--income/);
-    assert.match(html, /budget-chart-block__total">[^<]*900,00/);
-    assert.deepEqual(
-      [...html.matchAll(/--bar-scale:([\d.]+)/g)].map((m) => Number(m[1])),
-      [0.7778, 0.2222]
-    );
   } finally {
     Object.assign(state, previous);
   }
