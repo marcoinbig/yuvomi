@@ -1251,11 +1251,14 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  min-block-size: var(--target-base);
-  background: transparent;
   column-gap: var(--space-2);
   row-gap: var(--space-1h);
   padding: var(--space-2) var(--space-4);
+}
+
+button.budget-bar-row {
+  min-block-size: var(--target-base);
+  background: transparent;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 

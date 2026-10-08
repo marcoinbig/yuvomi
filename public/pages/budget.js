@@ -915,7 +915,7 @@ export async function render(container, { user }) {
       'button[data-clear-category-filter]'
     );
 
-    if(chipCategoryButton && budgetBody.contains(chipCategoryButton)) {
+    if (chipCategoryButton && budgetBody.contains(chipCategoryButton)) {
       toggleCategoryFilter(chipCategoryButton.dataset.clearCategoryFilter);
       return;
     }
@@ -923,7 +923,7 @@ export async function render(container, { user }) {
       'button[data-clear-subcategory-category][data-clear-subcategory-key]'
     );
 
-    if(chipSubcategoryButton && budgetBody.contains(chipSubcategoryButton)) {
+    if (chipSubcategoryButton && budgetBody.contains(chipSubcategoryButton)) {
       toggleSubcategoryFilter(
         chipSubcategoryButton.dataset.clearSubcategoryCategory,
         chipSubcategoryButton.dataset.clearSubcategoryKey
@@ -938,7 +938,7 @@ export async function render(container, { user }) {
     }
 
     const clearBudgetFilterButton = event.target.closest('button[data-clear-budget-filters]');
-    if(clearBudgetFilterButton && budgetBody.contains(clearBudgetFilterButton)) {
+    if (clearBudgetFilterButton && budgetBody.contains(clearBudgetFilterButton)) {
       void clearBudgetFilters();
     }
   });
@@ -1579,18 +1579,26 @@ function renderBody() {
   // nativen click, der ueber die Delegation oben im Edit-Modal landet.
 }
 
+// Der leere Schluessel ist die Zeile "Ohne Unterkategorie" und hat kein eigenes Label.
+function categoryFilterLabel() {
+  if (state.subcategoryFilter == null) return categoryLabel(state.categoryFilter);
+  const key = state.subcategoryFilter.key;
+  const sub = key ? subcategoryLabel(key) : t('budget.withoutSubcategory');
+  return `${categoryLabel(state.categoryFilter)} › ${sub}`;
+}
+
 function budgetChipHtml() {
   let chip = '';
-  if(state.categoryFilter != null) {
-    if(state.subcategoryFilter != null) {
+  if (state.categoryFilter != null) {
+    if (state.subcategoryFilter != null) {
       chip = `<button class="budget-account-chip" type="button"
                     data-clear-subcategory-category="${esc(state.categoryFilter)}"
                     data-clear-subcategory-key="${esc(state.subcategoryFilter.key)}"
                     aria-label="${esc(t('budget.clearCategoryFilter', {
-                      name: categoryLabel(state.categoryFilter) + ' › ' + subcategoryLabel(state.subcategoryFilter.key),
+                      name: categoryFilterLabel(),
                     }))}">
               <i data-lucide="tag" class="icon-sm" aria-hidden="true"></i>
-              <span>${esc(categoryLabel(state.categoryFilter) + ' › ' + subcategoryLabel(state.subcategoryFilter.key))}</span>
+              <span>${esc(categoryFilterLabel())}</span>
               <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
             </button>`;
     } else {
@@ -2042,8 +2050,8 @@ function toggleCategoryFilter(category) {
 
 function toggleSubcategoryFilter(category, key) {
   const current = state.subcategoryFilter;
-  if(current?.category === category && current.key === key) {
-      state.subcategoryFilter = null;
+  if (current?.category === category && current.key === key) {
+    state.subcategoryFilter = null;
   } else {
     state.subcategoryFilter = { category, key };
   }
@@ -2180,9 +2188,7 @@ function renderEntries() {
   if (!rows.length) {
     const activeFilters = [];
     if (state.categoryFilter) {
-      activeFilters.push(state.subcategoryFilter
-        ? `${categoryLabel(state.categoryFilter)} › ${subcategoryLabel(state.subcategoryFilter.key)}`
-        : categoryLabel(state.categoryFilter));
+      activeFilters.push(categoryFilterLabel());
     }
     if (state.responsibleFilterId != null) {
       activeFilters.push(responsibleFilterLabel(state) || t('budget.responsibleLabel'));
@@ -2204,7 +2210,7 @@ function renderEntries() {
         icon: 'x',
         attrs: { 'data-clear-budget-filters': '' },
       },
-    })
+    });
   }
 
   if (state.groupByResponsible) {
@@ -2342,7 +2348,7 @@ function statementCreditLimitHtml() {
 }
 
 /** Die Buchungszeilen selbst - einmal gebaut, von Liste und Gruppen benutzt. */
-function entryRows(list, { fullDate = false, rowClass = '', categoryGrouped = false } = {}) {
+function entryRows(list, { fullDate = false, rowClass = '' } = {}) {
   const ro = readOnly();
   // In einem Prognose-Monat liegt JEDE Zeile nach heute - dort sagt es der
   // Titel der Bilanz, und ein Symbol in jeder Metazeile waere Wiederholung.
@@ -2382,7 +2388,7 @@ function entryRows(list, { fullDate = false, rowClass = '', categoryGrouped = fa
      * Achse, nach der das Balkendiagramm über der Liste den Monat aufteilt;
      * die Unterkategorie verfeinert sie und wird beim Öffnen der Buchung
      * gezeigt und geändert. */
-    const categoryMeta = categoryGrouped || state.categoryFilter != null
+    const categoryMeta = state.categoryFilter != null
       ? (e.details_hidden || !e.subcategory ? '' : subcategoryLabel(e.subcategory))
       : categoryLabel(e.category);
     const categoryMetaText = categoryMeta ? ` · ${esc(categoryMeta)}` : '';
@@ -5757,6 +5763,14 @@ export const __test = {
   clearBudgetFiltersForTest(container) {
     _container = container;
     clearBudgetFilters();
+  },
+  toggleCategoryFilterForTest(container, category) {
+    _container = container;
+    toggleCategoryFilter(category);
+  },
+  toggleSubcategoryFilterForTest(container, category, key) {
+    _container = container;
+    toggleSubcategoryFilter(category, key);
   },
   // #1593: Monatswechsel behaelt den Filter.
   loadMonthForTest: loadMonth,

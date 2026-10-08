@@ -1820,6 +1820,81 @@ test('Einzelkategorie- und Unterkategoriefilter stimmen mit Liste und Status üb
   }
 });
 
+test('Kategorie- und Unterkategoriefilter lassen sich per zweitem Tipp aufheben', () => {
+  const state = budgetUi.state;
+  const previous = { ...state };
+  const restoreDom = installMiniDom();
+  const previousMatchMedia = global.window.matchMedia;
+  const body = {
+    replaceChildren() {},
+    insertAdjacentHTML() {},
+    setAttribute() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  const container = {
+    querySelector(selector) { return selector === '#budget-body' ? body : null; },
+    querySelectorAll() { return []; },
+    classList: { toggle() {} },
+  };
+  try {
+    Object.assign(state, {
+      activeTab: 'budget', loadError: null, month: '2026-06', currency: 'EUR',
+      entries: [], categoryFilter: null, subcategoryFilter: null,
+      responsibleFilterId: null, accountFilterId: null, groupByResponsible: false,
+      summary: { income: 0, expenses: 0, balance: 0, byCategory: [], pending: { count: 0 } },
+    });
+    global.window.matchMedia = () => ({ matches: false });
+
+    budgetUi.toggleCategoryFilterForTest(container, 'transport');
+    assert.equal(state.categoryFilter, 'transport');
+    budgetUi.toggleSubcategoryFilterForTest(container, 'transport', 'fuel');
+    assert.deepEqual(state.subcategoryFilter, { category: 'transport', key: 'fuel' });
+    budgetUi.toggleSubcategoryFilterForTest(container, 'transport', 'fuel');
+    assert.equal(state.subcategoryFilter, null, 'zweiter Tipp hebt die Unterkategorie auf');
+    assert.equal(state.categoryFilter, 'transport');
+
+    budgetUi.toggleSubcategoryFilterForTest(container, 'transport', 'fuel');
+    budgetUi.toggleCategoryFilterForTest(container, 'transport');
+    assert.equal(state.categoryFilter, null, 'zweiter Tipp hebt die Kategorie auf');
+    assert.equal(state.subcategoryFilter, null, 'die Unterkategorie faellt mit');
+
+    budgetUi.toggleCategoryFilterForTest(container, 'transport');
+    budgetUi.toggleCategoryFilterForTest(container, 'food');
+    assert.equal(state.categoryFilter, 'food', 'eine andere Kategorie ersetzt die erste');
+  } finally {
+    Object.assign(state, previous);
+    global.window.matchMedia = previousMatchMedia;
+    restoreDom();
+  }
+});
+
+test('Chip und Leerzustand benennen "Ohne Unterkategorie"', () => {
+  const state = budgetUi.state;
+  const previous = { ...state };
+  const restoreDom = installMiniDom();
+  try {
+    Object.assign(state, {
+      month: '2026-06', currency: 'EUR', ledgerQuery: '', ledgerResults: null,
+      categoryFilter: 'transport', subcategoryFilter: { category: 'transport', key: '' },
+      accountFilterId: null, responsibleFilterId: null, groupByResponsible: false,
+      meta: {
+        expenseCategories: [{ key: 'transport', name: 'Transport' }],
+        incomeCategories: [],
+        subcategories: { transport: [{ key: 'fuel', name: 'Fuel' }] },
+      },
+      entries: [{ id: 1, title: 'Fuel', amount: -40, date: '2026-06-03', category: 'transport', subcategory: 'fuel' }],
+    });
+    const chip = budgetUi.budgetChipHtml();
+    assert.equal((chip.match(/budget\.catTransport › budget\.withoutSubcategory/g) ?? []).length, 2, 'Beschriftung und aria-label');
+    assert.doesNotMatch(chip, /› ["<]/);
+    assert.match(budgetUi.renderEntries(), /budget\.withoutSubcategory/);
+  } finally {
+    Object.assign(state, previous);
+    restoreDom();
+  }
+});
+
 test('Filter-Delegation haengt einmal am Seitenaufbau, nicht an jedem Body-Render', () => {
   assert.equal([...budget.matchAll(/budgetBody\?\.addEventListener\('click'/g)].length, 1);
   const renderBodyStart = budget.indexOf('function renderBody()');
@@ -2691,7 +2766,6 @@ function uebersicht(extra = {}) {
   let html = '';
   const body = {
     replaceChildren() { html = ''; },
-    addEventListener: (e) => {},
     insertAdjacentHTML(_pos, markup) { html += markup; },
     setAttribute() {}, querySelector: () => null,
   };
@@ -4743,13 +4817,22 @@ test('#1593: Unterkategorien zeigen den Gesamtwert und folgen der bekannten Reih
     (rule) => rule.at.length === 0 && rule.selector.trim() === '.budget-bar-row'
   );
   assert.ok(barRowRule, 'Budget bar row styles exist');
-  assert.match(barRowRule.body, /min-block-size:\s*var\(--target-base\)/);
+  assert.doesNotMatch(barRowRule.body, /min-block-size|background:|transition:/, 'Vergleichszeilen sind keine Knoepfe');
+  const buttonRule = [...eachRule(budgetCss)].find(
+    (rule) => rule.at.length === 0 && rule.selector.trim() === 'button.budget-bar-row'
+  );
+  assert.ok(buttonRule, 'Die Knopf-Variante der Balkenzeile hat eigene Regeln');
+  assert.match(buttonRule.body, /min-block-size:\s*var\(--target-base\)/);
 
   const scales = (html, kind) =>
     [...html.matchAll(new RegExp(
       `class="budget-bar-row__fill budget-bar-row__fill--${kind}"\\s+style="--bar-scale:([\\d.]+)"`,
       'g',
     ))].map((match) => Number(match[1]));
+
+  const barRow = (html, key) => html.match(
+    new RegExp(`<button\\b[^>]*data-subcategory-filter="${key}"[\\s\\S]*?</button>`)
+  )?.[0] ?? '';
 
   try {
     Object.assign(state, {
@@ -4766,6 +4849,7 @@ test('#1593: Unterkategorien zeigen den Gesamtwert und folgen der bekannten Reih
         { category: 'housing', subcategory: 'utilities', amount: -100, responsible_users: [{ id: 10 }] },
         { category: 'housing', subcategory: 'rent_mortgage', amount: -700, responsible_users: [{ id: 10 }] },
         { category: 'housing', subcategory: 'utilities', amount: -1000, responsible_users: [{ id: 20 }] },
+        { category: 'housing', subcategory: 'utilities', amount: -300, is_pending: true, responsible_users: [{ id: 10 }] },
       ],
       summary: {
         byCategory: [{ category: 'housing', income: 0, expenses: -1800, total: -1800 }],
@@ -4777,6 +4861,8 @@ test('#1593: Unterkategorien zeigen den Gesamtwert und folgen der bekannten Reih
     assert.match(expensesHtml, /id="budget-subcategory-housing"/);
     assert.match(expensesHtml, /budget-chart-block__total">[^<]*800,00/);
     assert.deepEqual(scales(expensesHtml, 'expenses'), [0.875, 0.125]);
+    assert.doesNotMatch(barRow(expensesHtml, 'utilities'), /400,00/, 'offene Buchungen zaehlen nicht in den Balkenbetrag');
+    assert.match(barRow(expensesHtml, 'utilities'), /100,00/);
     const rows = [...expensesHtml.matchAll(/<button\b[\s\S]*?<\/button>/g)].map(([html]) => html);
     assert.equal(rows.length, 2);
     for (const html of rows) assert.doesNotMatch(html, /<div\b/, 'Buttons must not contain div elements');
