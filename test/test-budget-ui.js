@@ -1820,7 +1820,7 @@ test('Einzelkategorie- und Unterkategoriefilter stimmen mit Liste und Status üb
   }
 });
 
-test('Kategorie- und Unterkategoriefilter lassen sich per zweitem Tipp aufheben', () => {
+test('#1593: Kategorie- und Unterkategoriefilter lassen sich per zweitem Tipp aufheben', () => {
   const state = budgetUi.state;
   const previous = { ...state };
   const restoreDom = installMiniDom();
