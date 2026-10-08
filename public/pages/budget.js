@@ -1448,7 +1448,7 @@ function renderBody() {
         ${renderCategoryBars(s.byCategory)}
       </div>
     </div>` : ''}
-    </div>`} 
+    </div>`}
 
     <!-- Transaktionsliste -->
     <div class="budget-list-section">
@@ -1523,7 +1523,6 @@ function renderBody() {
     renderBody();
   });
 
- 
   // Zustaendigen-Filter und Gruppierung arbeiten auf den SCHON geladenen Zeilen
   // (#1057) - kein Nachladen, der Monat liegt vollstaendig vor.
   _container.querySelector('#budget-clear-responsible-filter')?.addEventListener('click', () => {
@@ -1586,12 +1585,12 @@ function budgetChipHtml() {
     if(state.subcategoryFilter != null) {
       chip = `<button class="budget-account-chip" type="button"
                     data-clear-subcategory-category="${esc(state.categoryFilter)}"
-                    data-clear-subcategory-key = "${esc(state.subcategoryFilter.key)}"
+                    data-clear-subcategory-key="${esc(state.subcategoryFilter.key)}"
                     aria-label="${esc(t('budget.clearCategoryFilter', {
-                      name: categoryLabel(state.categoryFilter) + ' > ' + subcategoryLabel(state.subcategoryFilter.key),
+                      name: categoryLabel(state.categoryFilter) + ' › ' + subcategoryLabel(state.subcategoryFilter.key),
                     }))}">
               <i data-lucide="tag" class="icon-sm" aria-hidden="true"></i>
-              <span>${esc(categoryLabel(state.categoryFilter) + ' > ' + subcategoryLabel(state.subcategoryFilter.key))}</span>
+              <span>${esc(categoryLabel(state.categoryFilter) + ' › ' + subcategoryLabel(state.subcategoryFilter.key))}</span>
               <i data-lucide="x" class="icon-sm" aria-hidden="true"></i>
             </button>`;
     } else {
@@ -1929,8 +1928,8 @@ function renderCategoryBars(byCategory) {
 
             const selected = state.categoryFilter === r.category;
             return `
-            <button 
-              type="button" 
+            <button
+              type="button"
               class="budget-bar-row${lead && i < CHART_LEAD ? ' budget-bar-row--lead' : ''}${selected ? ' is-category-selected' : ''}"
               data-category-filter="${esc(r.category)}"
               aria-pressed="${selected ? 'true' : 'false'}"
@@ -2010,9 +2009,9 @@ function subcategoryRows(category, entries) {
 
 function renderSubcategoryBreakdowns() {
   if (!state.categoryFilter) return '';
-  
+
   const entries = visibleEntries({ ignoreSubcategory: true });
-  
+
   const category = state.categoryFilter;
   const rows = subcategoryRows(category, entries);
   const total = entries
@@ -2182,7 +2181,7 @@ function renderEntries() {
     const activeFilters = [];
     if (state.categoryFilter) {
       activeFilters.push(state.subcategoryFilter
-        ? `${categoryLabel(state.categoryFilter)} > ${subcategoryLabel(state.subcategoryFilter.key)}`
+        ? `${categoryLabel(state.categoryFilter)} › ${subcategoryLabel(state.subcategoryFilter.key)}`
         : categoryLabel(state.categoryFilter));
     }
     if (state.responsibleFilterId != null) {
@@ -5750,14 +5749,16 @@ export const __test = {
     _container = container;
     toggleCategoryChart();
   },
-
+  // #1593: Kategorie-Filter - Aufschluesselung, Chip und Statuszeile als Programm.
   renderSubcategoryBreakdowns,
   budgetChipHtml,
   ledgerStatusText,
+  // #1593: "Filter leeren" und der Fokus danach gegen einen Test-Container.
   clearBudgetFiltersForTest(container) {
     _container = container;
     clearBudgetFilters();
   },
+  // #1593: Monatswechsel behaelt den Filter.
   loadMonthForTest: loadMonth,
   focusFilterResultForTest(container, options) {
     _container = container;

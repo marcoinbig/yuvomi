@@ -1764,7 +1764,7 @@ test('Einzelkategorie- und Unterkategoriefilter stimmen mit Liste und Status üb
 
     assert.deepEqual(budgetUi.visibleEntries().map((entry) => entry.id), [1]);
     assert.match(budgetUi.renderEntries(), /Fuel/);
-    assert.match(budgetUi.budgetChipHtml(), /budget\.catTransport &gt; budget\.subcatFuel/);
+    assert.match(budgetUi.budgetChipHtml(), /budget\.catTransport › budget\.subcatFuel/);
     assert.doesNotMatch(budgetUi.renderEntries(), /Groceries|Private details/);
 
     state.subcategoryFilter = null;
@@ -4801,7 +4801,7 @@ test('#1593: Unterkategorien zeigen den Gesamtwert und folgen der bekannten Reih
     });
 
     const incomeHtml = budgetUi.renderSubcategoryBreakdowns();
-    
+
     assert.match(incomeHtml, /budget-chart-block__total">[^<]*1\.200,00/);
     const _scales = scales(incomeHtml, 'income');
     assert.deepEqual(_scales, [0.75, 0.25]);
