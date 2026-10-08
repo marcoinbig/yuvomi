@@ -1776,8 +1776,8 @@ test('Einzelkategorie- und Unterkategoriefilter stimmen mit Liste und Status üb
       currency: 'EUR', categoryFilter: 'transport', subcategoryFilter: null,
       entries: state.entries,
     });
-    assert.match(page, /id="budget-ledger-status"[^>]*role="status"[^>]*>budget\.ledgerSearchCount/);
-    assert.match(page, /budget\.ledgerSearchCount[^<]*40,00/);
+    assert.match(page, /id="budget-ledger-status"[^>]*role="status"[^>]*>budget\.ledgerFilterSummary/);
+    assert.match(page, /budget\.ledgerFilterSummary[^<]*40,00/);
 
     state.categoryFilter = '__private__';
     assert.deepEqual(budgetUi.visibleEntries().map((entry) => entry.id), [4]);
@@ -1861,12 +1861,16 @@ test('Filter leeren baut die volle Liste neu und setzt mobil den Fokus dorthin',
       summary: { income: 0, expenses: -40, balance: -40, byCategory: [], pending: { count: 0 } },
       categoryFilter: 'transport', subcategoryFilter: { category: 'transport', key: 'fuel' },
       responsibleFilterId: null, accountFilterId: null, groupByResponsible: false,
+      loanFilterId: 9, loanStatusFilter: 'paid', accountsShowArchived: true,
     });
     global.window.matchMedia = () => ({ matches: true });
     budgetUi.clearBudgetFiltersForTest(container);
 
     assert.equal(state.categoryFilter, null);
     assert.equal(state.subcategoryFilter, null);
+    assert.equal(state.loanFilterId, 9, 'der Darlehensfilter gehoert zu einem anderen Reiter');
+    assert.equal(state.loanStatusFilter, 'paid');
+    assert.equal(state.accountsShowArchived, true);
     assert.match(html, /Fuel/);
     assert.equal(focused, true);
     assert.equal(scrolled, true);

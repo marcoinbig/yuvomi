@@ -675,7 +675,7 @@ function ledgerStatusText() {
   const sum = entries.reduce((total, entry) => (
     total + (entry.is_pending ? 0 : Number(entry.amount) || 0)
   ), 0);
-  return `${t('budget.ledgerSearchCount', { count: entries.length })} · ${t('budget.amountLabel')}: ${formatAmount(sum)}`;
+  return t('budget.ledgerFilterSummary', { count: entries.length, sum: formatAmount(sum) });
 }
 
 function findEntry(id) {
@@ -812,11 +812,6 @@ export async function render(container, { user }) {
   // einer Woche noch den Kontoauszug von damals — beim Darlehens-Statusfilter
   // sogar ohne sichtbaren Hinweis. Der aktive Tab bleibt bewusst erhalten.
   resetSessionFilters(state);
-  state.accountFilterId = null;
-  state.categoryFilterKeys = [];
-  state.loanFilterId = null;
-  state.loanStatusFilter = 'active';
-  state.accountsShowArchived = false;
   // Sprungziel von aussen (Dashboard-Kachel „Ausgleich offen"): ?tab= waehlt
   // den Reiter. Ohne Parameter bleibt der zuletzt aktive, wie bisher.
   const tabFromUrl = tabFromQuery(window.location.search);
@@ -2030,7 +2025,7 @@ function renderSubcategoryBreakdowns() {
                 aria-labelledby="${esc(titleId)}">
           <h3 class="budget-chart-block__title" id="${esc(titleId)}">
             <span>${esc(categoryLabel(category))}</span>
-            <div class="budget-chart-block__total">${amountByRole(total, 'total').text}</div>
+            <span class="budget-chart-block__total">${amountByRole(total, 'total').text}</span>
           </h3>
           <div class="budget-chart-block__rows">
             ${rows}
@@ -2060,7 +2055,11 @@ function toggleSubcategoryFilter(category, key) {
 
 async function clearBudgetFilters() {
   const needsReload = state.accountFilterId != null;
-  resetSessionFilters(state);
+  state.accountFilterId = null;
+  state.categoryFilter = null;
+  state.subcategoryFilter = null;
+  state.responsibleFilterId = null;
+  state.responsibleFilterCachedName = '';
   if (needsReload) await reloadMonth();
   renderBody();
   focusFilterResult({ focusList: true });
