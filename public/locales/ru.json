@@ -4438,6 +4438,8 @@
         "intervalLabel": "Каждые",
         "nextPaymentLabel": "Следующий платеж",
         "reminderDaysLabel": "Дни напоминания",
+        "reminderEnabledLabel": "Напоминание об оплате",
+        "noReminder": "Без напоминания",
         "categoryLabel": "Категория",
         "paymentMethodLabel": "Способ оплаты",
         "websiteLabel": "Веб-сайт",
